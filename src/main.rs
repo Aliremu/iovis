@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs};
+use std::env;
 
 use iovis::{parser::Parser, ast::{Expr, Node, BinaryOp, Pow, Bang, Sub, UnaryOp, Literal, Stmt}, lexer::Span};
 
@@ -109,7 +110,7 @@ fn evaluate_call(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
             if ctx.variables.contains_key(func) {
                 if let Expr::IdentExpr(eval) = ctx.get_var(func).val {
                     if ctx.functions.contains_key(&eval) {
-                        return run_function(ctx, func, vals);
+                        return run_function(ctx, &eval, vals);
                     }
                 }
             }
@@ -212,7 +213,7 @@ impl Context {
         // ctx.declare_var("print", )
 
         ctx.declare_native_var("print".to_string(), Box::new(|args| {
-            println!("{:?}", args);
+            println!("{:?}", args.iter().map(|x| x.val.clone()).collect::<Vec<Expr>>());
             Node::new(Expr::LiteralExpr(Literal::Boolean(true)), Span { start: 0, end: 0 })
         }));
 
@@ -259,22 +260,25 @@ fn evaluate_stmt(ctx: &mut Context, node: Node<Stmt>) {
 }
 
 fn main() {
-    let input = r#"
-        fn 雪花飘飘() {
-            let mat = [
-                [7.5,  2.3],
-                [-4.6, 2.1]
-            ];
+    // let input = r#"
+    //     fn 雪花飘飘() {
+    //         let mat = [
+    //             [7.5,  2.3],
+    //             [-4.6, 2.1]
+    //         ];
 
-            let det = mat.det();
+    //         let det = mat.det();
 
-            print(det == 26.33);
-        }
+    //         print(det == 26.33);
+    //     }
 
-        雪花飘飘();
-    "#.to_string();
+    //     雪花飘飘();
+    // "#.to_string();
+    let args: Vec<String> = env::args().collect();
+    let contents = fs::read_to_string(args.get(1).expect("Usage: iovis.exe <file>"))
+        .expect("Should have been able to read the file");
 
-    let mut parser = Parser::new(input.clone());
+    let mut parser = Parser::new(contents.clone());
     let parsed = parser.parse();
     
     let mut ctx = Context::new();

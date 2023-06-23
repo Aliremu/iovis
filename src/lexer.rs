@@ -1,4 +1,5 @@
 use std::{fmt::Write, error::Error};
+use unic::emoji::{char::is_emoji};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
@@ -164,7 +165,7 @@ impl Lexer {
             },
             'a'..='z' | 'A'..='Z' | '_' | '\u{4E00}'..='\u{9FFF}' => {
                 let ident = self.read_ident();
-
+                
                 if self.ch != '\0' {
                     self.position -= 1;
                 }
@@ -180,9 +181,18 @@ impl Lexer {
                     _        => Token::Ident(ident)
                 }
             },
+            n if is_emoji(n) => {
+                let ident = self.read_ident();
+
+                if self.ch != '\0' {
+                    self.position -= 1;
+                }
+
+                Token::Ident(ident)
+            },
             '\0' => Token::EOF,
             _ => {
-                println!("ILLEGAL {}", self.ch as u8);
+                println!("ILLEGAL {}", self.ch);
                 Token::Illegal
             }
         };
@@ -230,7 +240,7 @@ impl Lexer {
 
     pub fn read_ident(&mut self) -> String {
         let mut ident = String::new();
-        while self.ch.is_ascii_alphanumeric() || self.ch == '_' || (self.ch >= '\u{4E00}' && self.ch <= '\u{9FFF}') {
+        while self.ch.is_ascii_alphanumeric() || self.ch == '_' || (self.ch >= '\u{4E00}' && self.ch <= '\u{9FFF}') || is_emoji(self.ch) {
             ident.write_char(self.ch).unwrap();
             self.read_char();
         }
