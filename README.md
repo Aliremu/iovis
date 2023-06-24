@@ -1,9 +1,6 @@
 # iovis
 programming language interpreter built in Rust
 
-FIRST-CLASS CITIZEN FUNCTIONS
-UN-SCOPED VARIABLES!!! (will fix)
-SUPPORT FOR UNICODE IDENTIFIERS
-BUILT-IN LINEAR ALGEBRA FUNCTIONS FOR ARRAYS (VECTORS AND MATRICES)
+Check out the live demo [here](https://xirei.moe/iovis/)
 
 more to come soon™

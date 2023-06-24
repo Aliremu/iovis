@@ -1,7 +1,8 @@
 use std::ops;
 use crate::lexer::Span;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -28,13 +29,13 @@ pub enum BinaryOp {
     Or
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum UnaryOp {
     Bang,
     Sub,
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum Literal {
     Integer(i64),
     Decimal(f64),
@@ -440,7 +441,26 @@ impl Sub for Literal {
 //     pub right: Box<Node<Expr>>
 // }
 
-#[derive(Debug, PartialEq, Clone)]
+impl ToString for Literal {
+    fn to_string(&self) -> String {
+        match self {
+            Literal::Boolean(n) => n.to_string(),
+            Literal::Integer(n) => n.to_string(),
+            Literal::Decimal(n) => n.to_string(),
+            Literal::String(n)  => n.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum Stmt {
+    LocalDeclaration(String, Node<Expr>),
+    FunctionDeclaration(String, Vec<Node<Expr>>, Vec<Node<Stmt>>),
+    Block(Vec<Node<Expr>>),
+    Semi(Node<Expr>),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum Expr {
     LiteralExpr(Literal),
     ArrExpr(Vec<Node<Expr>>),
@@ -455,14 +475,7 @@ pub enum Expr {
     FunctionCallExpr { func: String, args: Vec<Node<Expr>> },
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Stmt {
-    LocalDeclaration(String, Node<Expr>),
-    FunctionDeclaration(String, Vec<Node<Expr>>, Vec<Node<Stmt>>),
-    Semi(Node<Expr>),
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct Node<T> {
     pub val: T,
     pub span: Span

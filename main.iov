@@ -1,13 +1,13 @@
-fn 雪花飘飘() {
-    let 😀 = [
+fn test() {
+    let mat = [
         [1, 2],
         [3, 4],
     ];
 
-    let 😭 = print;
-    let 😁 = 😀.det();
+    let x = print;
+    let det = mat.det();
 
-    😭(😁);
+    x(det);
 }
 
-雪花飘飘();
+test();

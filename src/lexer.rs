@@ -1,7 +1,9 @@
-use std::{fmt::Write, error::Error};
+use std::{fmt::Write};
 use unic::emoji::{char::is_emoji};
+use serde::{Deserialize, Serialize};
+use crate::err::CompileError;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum Literal {
     Integer(i64),
     Decimal(f64),
@@ -9,7 +11,7 @@ pub enum Literal {
     Boolean(bool)
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum Token {
     Ident(String),
 
@@ -77,7 +79,7 @@ impl From<f64> for Token {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize
@@ -104,7 +106,7 @@ impl Lexer {
         lexer
     }
 
-    pub fn next_token(&mut self) -> Result<(Token, Span), String> {
+    pub fn next_token(&mut self) -> Result<(Token, Span), CompileError> {
         self.skip_whitespace();
 
         while self.ch == '/' && self.peek() == '/' {
@@ -114,7 +116,7 @@ impl Lexer {
             self.skip_whitespace();
         }
 
-        let start = self.position;
+        let start = self.position - 1;
 
         let token = match self.ch {
             '('  => Token::LeftParen,
@@ -165,7 +167,7 @@ impl Lexer {
             },
             'a'..='z' | 'A'..='Z' | '_' | '\u{4E00}'..='\u{9FFF}' => {
                 let ident = self.read_ident();
-                
+
                 if self.ch != '\0' {
                     self.position -= 1;
                 }
@@ -191,14 +193,14 @@ impl Lexer {
                 Token::Ident(ident)
             },
             '\0' => Token::EOF,
-            _ => {
-                println!("ILLEGAL {}", self.ch);
-                Token::Illegal
+            n => {
+                return Err(CompileError::IllegalToken(n, Span { start, end: start + 1 }));
             }
         };
 
-        self.read_char();
         let end = self.position;
+
+        self.read_char();
 
         Ok((token, Span { start, end }))
     }
