@@ -1,57 +1,55 @@
-
+use crate::{
+    ast::{Bang, BinaryExpr, BinaryOp, Expr, Literal, Node, Pow, Stmt, Sub, UnaryExpr, UnaryOp, IndexExpr, ArrExpr, MethodCallExpr, FunctionCallExpr, AssignExpr, LocalDeclaration, FunctionDeclaration},
+    lexer::Span,
+};
 use std::collections::HashMap;
 use std::fmt::Write;
-use crate::{parser::Parser, ast::{Expr, Node, BinaryOp, Pow, Bang, Sub, UnaryOp, Literal, Stmt}, lexer::Span};
 
-fn evaluate_binary_expr(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
-    if let Expr::BinaryExpr { op, left, right } = &node.val {
-        let left  = evaluate(ctx, *left.clone());
-        let right = evaluate(ctx, *right.clone());
+fn evaluate_binary_expr(ctx: &mut Context, expr: &BinaryExpr) -> Expr {
+    let left = evaluate(ctx, *expr.clone().left);
+    let right = evaluate(ctx, *expr.clone().right);
 
-        if let (Expr::LiteralExpr(left_lit), Expr::LiteralExpr(right_lit)) = (left.val, right.val) {
-            let out = match op {
-                BinaryOp::Add => left_lit + right_lit,
-                BinaryOp::Sub => left_lit - right_lit,
-                BinaryOp::Mul => left_lit * right_lit,
-                BinaryOp::Div => left_lit / right_lit,
-                BinaryOp::Mod => left_lit % right_lit,
-                BinaryOp::Pow => left_lit.pow(right_lit),
-                BinaryOp::Eq  => Literal::Boolean(left_lit.eq(&right_lit)),
-                BinaryOp::Ne  => Literal::Boolean(left_lit.ne(&right_lit)),
-                BinaryOp::Gt  => Literal::Boolean(left_lit.gt(&right_lit)),
-                BinaryOp::Ge  => Literal::Boolean(left_lit.ge(&right_lit)),
-                BinaryOp::Lt  => Literal::Boolean(left_lit.lt(&right_lit)),
-                BinaryOp::Le  => Literal::Boolean(left_lit.le(&right_lit)),
-                _ => todo!()
-            };
+    if let (Expr::LiteralExpr(left_lit), Expr::LiteralExpr(right_lit)) = (left, right) {
+        let out = match expr.op {
+            BinaryOp::Add => left_lit + right_lit,
+            BinaryOp::Sub => left_lit - right_lit,
+            BinaryOp::Mul => left_lit * right_lit,
+            BinaryOp::Div => left_lit / right_lit,
+            BinaryOp::Mod => left_lit % right_lit,
+            BinaryOp::Pow => left_lit.pow(right_lit),
+            BinaryOp::Eq => Literal::Boolean(left_lit.eq(&right_lit)),
+            BinaryOp::Ne => Literal::Boolean(left_lit.ne(&right_lit)),
+            BinaryOp::Gt => Literal::Boolean(left_lit.gt(&right_lit)),
+            BinaryOp::Ge => Literal::Boolean(left_lit.ge(&right_lit)),
+            BinaryOp::Lt => Literal::Boolean(left_lit.lt(&right_lit)),
+            BinaryOp::Le => Literal::Boolean(left_lit.le(&right_lit)),
+            _ => todo!(),
+        };
 
-            return Node::new(Expr::LiteralExpr(out), node.span);
-        }
+        return Expr::LiteralExpr(out);
     }
 
-    todo!("{:?}", node);
+    panic!("wtf");
 }
 
-fn evaluate_unary_expr(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
-    if let Expr::UnaryExpr { op, expr } = node.val {
-        let right = evaluate(ctx, *expr);
+fn evaluate_unary_expr(ctx: &mut Context, expr: &UnaryExpr) -> Expr {
+    let right = evaluate(ctx, *expr.clone().expr);
 
-        if let Expr::LiteralExpr(lit) = right.val {
-            let out = match op {
-                UnaryOp::Sub  => lit.sub(),
-                UnaryOp::Bang => lit.bang(),
-                _ => todo!()
-            };
+    if let Expr::LiteralExpr(lit) = right {
+        let out = match expr.op {
+            UnaryOp::Sub => lit.sub(),
+            UnaryOp::Bang => lit.bang(),
+            _ => todo!(),
+        };
 
-            return Node::new(Expr::LiteralExpr(out), node.span);
-        }
+        return Expr::LiteralExpr(out);
     }
 
     todo!();
 }
 
-fn evaluate_ident(ctx: &Context, node: Node<Expr>) -> Node<Expr> {
-    if let Expr::IdentExpr(ident) = &node.val {
+fn evaluate_ident(ctx: &Context, node: Expr) -> Expr {
+    if let Expr::IdentExpr(ident) = &node {
         if !ctx.variables.contains_key(ident) {
             if ctx.functions.contains_key(ident) {
                 return node;
@@ -64,8 +62,8 @@ fn evaluate_ident(ctx: &Context, node: Node<Expr>) -> Node<Expr> {
     todo!();
 }
 
-fn evaluate_assign(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
-    if let Expr::AssignExpr { left, right } = node.val {
+fn evaluate_assign(ctx: &mut Context, node: Expr) -> Expr {
+    if let Expr::AssignExpr(AssignExpr { left, right }) = node {
         if let Expr::IdentExpr(ident) = left.val {
             if ctx.variables.contains_key(&ident) {
                 let val = evaluate(ctx, *right);
@@ -80,7 +78,7 @@ fn evaluate_assign(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
     todo!();
 }
 
-fn run_function(ctx: &mut Context, func: &String, args: Vec<Node<Expr>>) -> Node<Expr> {
+fn run_function(ctx: &mut Context, func: &String, args: Vec<Node<Expr>>) -> Expr {
     let func = ctx.functions.get(func).unwrap();
 
     if let RuntimeVal::NativeFunction(func) = &func {
@@ -90,25 +88,25 @@ fn run_function(ctx: &mut Context, func: &String, args: Vec<Node<Expr>>) -> Node
             ctx.evaluate_stmt(stmt);
         }
 
-        return Node::new(Expr::LiteralExpr(Literal::Boolean(true)), Span { start: 0, end: 0 });
+        return Expr::LiteralExpr(Literal::Boolean(true));
     }
 
     panic!("Undeclared function");
 }
 
-fn evaluate_call(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
-    if let Expr::FunctionCallExpr { func, args } = &node.val {
+fn evaluate_call(ctx: &mut Context, node: Node<Expr>) -> Expr {
+    if let Expr::FunctionCallExpr(FunctionCallExpr { func, args }) = &node.val {
         let mut vals = Vec::new();
-        
+
         for arg in args {
-            vals.push(evaluate(ctx, arg.clone()));
+            vals.push(Node::new(evaluate(ctx, arg.clone()), Span { start: 0, end: 0}));
         }
 
         if ctx.functions.contains_key(func) {
             return run_function(ctx, func, vals);
         } else {
             if ctx.variables.contains_key(func) {
-                if let Expr::IdentExpr(eval) = ctx.get_var(func).val {
+                if let Expr::IdentExpr(eval) = ctx.get_var(func) {
                     if ctx.functions.contains_key(&eval) {
                         return run_function(ctx, &eval, vals);
                     }
@@ -127,59 +125,88 @@ fn evaluate_call(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
     todo!();
 }
 
-fn evaluate(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
-    match &node.val {
-        Expr::BinaryExpr { .. } => {
-            evaluate_binary_expr(ctx, node)
-        },
+fn evaluate_arr(ctx: &mut Context, node: Node<Expr>) -> Expr {
+    if let Expr::ArrExpr(ArrExpr { elems }) = &node.val {
+        let mut vals = Vec::new();
 
-        Expr::UnaryExpr { .. } => {
-            evaluate_unary_expr(ctx, node)
-        },
-
-        Expr::IdentExpr { .. } => {
-            evaluate_ident(ctx, node)
-        },
-
-        Expr::AssignExpr { .. } => {
-            evaluate_assign(ctx, node)
-        },
-
-        Expr::FunctionCallExpr { .. } => {
-            evaluate_call(ctx, node)
+        for elem in elems {
+            vals.push(Node::new(evaluate(ctx, elem.clone()), Span { start: 0, end: 0 }));
         }
 
-        Expr::LiteralExpr(_) => {
-            node
-        },
+        return Expr::ArrExpr(ArrExpr { elems: vals });
+    }
 
-        Expr::ArrExpr(..) => {
-            node
-        },
+    todo!();
+}
 
-        Expr::IndexExpr { expr, index } => {
-            if let Expr::ArrExpr(arr) = evaluate(ctx, *expr.clone()).val {
+fn evaluate(ctx: &mut Context, node: Node<Expr>) -> Expr {
+    match &node.val {
+        Expr::BinaryExpr(expr) => evaluate_binary_expr(ctx, &expr),
+
+        Expr::UnaryExpr(expr) => evaluate_unary_expr(ctx, &expr),
+
+        Expr::IdentExpr { .. } => evaluate_ident(ctx, node.val),
+
+        Expr::AssignExpr { .. } => evaluate_assign(ctx, node.val),
+
+        Expr::FunctionCallExpr { .. } => {
+            let copy = ctx.variables.clone();
+
+            let out = evaluate_call(ctx, node);
+
+            ctx.variables = ctx
+                .variables
+                .clone()
+                .into_iter()
+                .filter(|x| copy.contains_key(&x.0))
+                .collect::<HashMap<String, Expr>>();
+
+            out
+        }
+
+        Expr::LiteralExpr(lit) => node.val,
+
+        Expr::ArrExpr { .. } => evaluate_arr(ctx, node),
+
+        Expr::IndexExpr(IndexExpr { expr, index }) => {
+            if let Expr::ArrExpr(ArrExpr { elems }) = evaluate(ctx, *expr.clone()) {
                 let idx = evaluate(ctx, *index.clone());
 
-                if let Expr::LiteralExpr(Literal::Integer(n)) = idx.val {
-                    return evaluate(ctx, arr[n as usize].clone());
+                if let Expr::LiteralExpr(Literal::Integer(n)) = idx {
+                    return evaluate(ctx, elems[n as usize].clone());
                 }
 
                 panic!("Index must be an integer!");
             }
 
             panic!("This type is not indexable!");
-        },
+        }
 
-        Expr::MethodCallExpr { receiver, method, args } => {
+        Expr::MethodCallExpr(MethodCallExpr {
+            receiver,
+            method,
+            args,
+        }) => {
             if method == "det" {
-                if let Expr::ArrExpr(arr) = ctx.get_var(receiver).val {
-                    let arr0 = &arr[0].val;
-                    let arr1 = &arr[1].val;
+                if let Expr::ArrExpr(ArrExpr { elems }) = ctx.get_var(receiver) {
+                    let arr0 = &elems[0].val;
+                    let arr1 = &elems[1].val;
 
-                    if let (Expr::ArrExpr(arr3), Expr::ArrExpr(arr4)) = (arr0, arr1) {
-                        if let (Expr::LiteralExpr(a), Expr::LiteralExpr(b), Expr::LiteralExpr(c), Expr::LiteralExpr(d)) = (evaluate(ctx, arr3[0].clone()).val, evaluate(ctx, arr3[1].clone()).val, evaluate(ctx, arr4[0].clone()).val, evaluate(ctx, arr4[1].clone()).val) {
-                            return Node::new(Expr::LiteralExpr(Literal::from(a * d - b * c)), Span { start: 0, end: 0 });
+                    if let (Expr::ArrExpr(ArrExpr { elems: arr3 }), Expr::ArrExpr(ArrExpr { elems: arr4 })) =
+                        (arr0, arr1)
+                    {
+                        if let (
+                            Expr::LiteralExpr(a),
+                            Expr::LiteralExpr(b),
+                            Expr::LiteralExpr(c),
+                            Expr::LiteralExpr(d),
+                        ) = (
+                            arr3[0].clone().val,
+                            arr3[1].clone().val,
+                            arr4[0].clone().val,
+                            arr4[1].clone().val,
+                        ) {
+                            return Expr::LiteralExpr(Literal::from(a * d - b * c));
                         }
                     }
                 }
@@ -188,21 +215,21 @@ fn evaluate(ctx: &mut Context, node: Node<Expr>) -> Node<Expr> {
             panic!("not");
         }
 
-        _ => panic!()
+        _ => panic!(),
     }
 }
 
 #[derive(Clone)]
 pub struct Context {
-    variables: HashMap<String, Node<Expr>>,
+    variables: HashMap<String, Expr>,
     functions: HashMap<String, RuntimeVal>,
-    pub output: String
+    pub output: String,
 }
 
 #[derive(Clone)]
 enum RuntimeVal {
-    NativeFunction(fn(&mut Context, Vec<Node<Expr>>) -> Node<Expr>),
-    Function(Vec<Node<Stmt>>)
+    NativeFunction(fn(&mut Context, Vec<Node<Expr>>) -> Expr),
+    Function(Vec<Node<Stmt>>),
 }
 
 impl Context {
@@ -210,20 +237,24 @@ impl Context {
         let mut ctx = Context {
             variables: HashMap::new(),
             functions: HashMap::new(),
-            output: String::new()
+            output: String::new(),
         };
 
         // ctx.declare_var("print", )
         let a = |context: &mut Context, args: Vec<Node<Expr>>| {
-            let m = args.iter().filter_map(|x| match x.val.clone() {
-                Expr::LiteralExpr(lit) => Some(lit.to_string()),
-                _ => None,
-            }).collect::<Vec<String>>().join(",");
+            let m = args
+                .iter()
+                .filter_map(|x| match x.val.clone() {
+                    Expr::LiteralExpr(lit) => Some(lit.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
+                .join(",");
 
             // println!("{}", m);
-            writeln!(context.output, "{}", m);
+            writeln!(context.output, "{}", m).unwrap();
 
-            Node::new(Expr::LiteralExpr(Literal::String(m)), Span { start: 0, end: 0 })
+            Expr::LiteralExpr(Literal::String(m))
         };
 
         ctx.declare_native_var("print".to_string(), a);
@@ -238,34 +269,43 @@ impl Context {
         ret
     }
 
-    pub fn declare_var(&mut self, ident: String, node: Node<Expr>) {
+    pub fn declare_var(&mut self, ident: String, node: Expr) {
         self.variables.insert(ident, node);
     }
 
-    pub fn declare_native_var(&mut self, ident: String, func: fn(&mut Context, Vec<Node<Expr>>) -> Node<Expr>) {
-        self.functions.insert(ident, RuntimeVal::NativeFunction(func));
+    pub fn declare_native_var(
+        &mut self,
+        ident: String,
+        func: fn(&mut Context, Vec<Node<Expr>>) -> Expr,
+    ) {
+        self.functions
+            .insert(ident, RuntimeVal::NativeFunction(func));
     }
 
-    pub fn get_var(&self, ident: &String) -> Node<Expr> {
-        self.variables.get(ident).expect("This variable has not been declared!").clone()
+    pub fn get_var(&self, ident: &String) -> Expr {
+        self.variables
+            .get(ident)
+            .expect("This variable has not been declared!")
+            .clone()
     }
 
     pub fn evaluate_stmt(&mut self, node: Node<Stmt>) {
         match &node.val {
-            Stmt::LocalDeclaration(ident, expr) => {
-                let val = evaluate(self, expr.clone());
-                self.variables.insert(ident.to_owned(), val);
-            },
-    
-            Stmt::FunctionDeclaration(func, args, block) => {
-                self.functions.insert(func.to_string(), RuntimeVal::Function(block.clone()));
-            },
-    
+            Stmt::LocalDeclaration(LocalDeclaration { ident, value }) => {
+                let val = evaluate(self, value.clone());
+                self.variables.insert(ident.val.clone(), val);
+            }
+
+            Stmt::FunctionDeclaration(FunctionDeclaration { ident, params, output, block }) => {
+                self.functions
+                    .insert(ident.val.clone(), RuntimeVal::Function(block.val.stmts.clone()));
+            }
+
             Stmt::Semi(expr) => {
                 evaluate(self, expr.clone());
-            },
-    
-            _ => panic!()
+            }
+
+            _ => panic!(),
         }
     }
 }

@@ -1,0 +1,9 @@
+WASM: wasm-pack build
+
+Build: cargo build --release && cp ./target/release/iovis.exe ./iovis.exe
+
+Compile: ./iovis.exe -c main.iov -o out.o && gcc out.o test.cpp -o main.exe 
+
+Compile: ./iovis.exe -c main.iov -o out.o && gcc out.o test.cpp -o main.exe && ./main
+
+SDL2: gcc main.o -Iinclude -Llib -lmingw32 -lSDL2main -lSDL2 -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid -o main.exe

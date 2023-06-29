@@ -1,0 +1,1 @@
+./iovis.exe -c main.iov -o out.o && gcc out.o lib.o -o main.exe 

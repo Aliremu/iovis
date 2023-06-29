@@ -14,7 +14,11 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+clap = { version = "4.3.8", features = ["derive"] }
+# llvm-sys = "120"
+inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm15-0"] }
 serde = { version = "1.0.164", features = ["derive", "serde_derive"] }
 serde_json = "1.0.97"
+unescape = "0.1.0"
 unic = "0.9.0"
 wasm-bindgen = "0.2"

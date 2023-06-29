@@ -1,13 +1,13 @@
 use core::fmt;
 use std::error::Error;
 
-use crate::lexer::{Span, Token};
+use crate::lexer::{TokenKind, LineColumn};
 
 #[derive(Debug)]
 pub enum CompileError {
-    IllegalToken(char, Span),
-    UnexpectedToken(Token, Token, Span),
-    UnbalancedToken(Token, Span),
+    IllegalToken(char, LineColumn),
+    UnexpectedToken(TokenKind, TokenKind, LineColumn),
+    UnbalancedToken(TokenKind, LineColumn),
 
     Other(String),
 }

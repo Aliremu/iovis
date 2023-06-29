@@ -11,8 +11,19 @@ pub enum Literal {
     Boolean(bool)
 }
 
+impl ToString for Literal {
+    fn to_string(&self) -> String {
+        match self {
+            Literal::Boolean(n) => n.to_string(),
+            Literal::Integer(n) => n.to_string(),
+            Literal::Decimal(n) => n.to_string(),
+            Literal::String(n)  => n.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub enum Token {
+pub enum TokenKind {
     Ident(String),
 
     LeftParen,
@@ -25,21 +36,35 @@ pub enum Token {
     Colon,
     Comma,
     Dot,
+    DotDot,
 
     Plus,
     Minus,
-    Asterisk,
-    Carat,
+    Star,
+    Caret,
     Slash,
-    Modulo,
-    Bang,
-    Equal,
-    NotEqual,
-    Assign,
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
+    Percent,
+
+    PlusEq,
+    MinusEq,
+    StarEq,
+    CaretEq,
+    SlashEq,
+    PercentEq,
+
+    And,
+    AndAnd,
+    Or,
+    OrOr,
+
+    Not,
+    EqEq,
+    NotEq,
+    Eq,
+    Gt,
+    Ge,
+    Lt,
+    Le,
 
     Literal(Literal),
 
@@ -49,64 +74,104 @@ pub enum Token {
     False,
     If,
     Else,
+    While,
     Return,
+
+    Struct,
+
+    Extern,
 
     Illegal,
     EOF,
 }
 
-impl From<String> for Token {
-    fn from(other: String) -> Token {
-        Token::Ident(other)
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: Span
+}
+
+impl Token {
+    pub fn new(kind: TokenKind, span: Span) -> Self {
+        Self {
+            kind,
+            span
+        }
     }
 }
 
-impl<'a> From<&'a str> for Token {
-    fn from(other: &'a str) -> Token {
-        Token::Ident(other.to_string())
+impl From<String> for TokenKind {
+    fn from(other: String) -> TokenKind {
+        TokenKind::Ident(other)
     }
 }
 
-impl From<i64> for Token {
-    fn from(other: i64) -> Token {
-        Token::Literal(Literal::Integer(other))
+impl<'a> From<&'a str> for TokenKind {
+    fn from(other: &'a str) -> TokenKind {
+        TokenKind::Ident(other.to_string())
     }
 }
 
-impl From<f64> for Token {
-    fn from(other: f64) -> Token {
-        Token::Literal(Literal::Decimal(other))
+impl From<i64> for TokenKind {
+    fn from(other: i64) -> TokenKind {
+        TokenKind::Literal(Literal::Integer(other))
+    }
+}
+
+impl From<f64> for TokenKind {
+    fn from(other: f64) -> TokenKind {
+        TokenKind::Literal(Literal::Decimal(other))
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub struct LineColumn {
+    pub line: usize,
+    pub column: usize
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct Span {
-    pub start: usize,
-    pub end: usize
+    pub start: LineColumn,
+    pub end: LineColumn
+}
+
+impl Span {
+    pub fn merge(start: Span, end: Span) -> Span {
+        Span {
+            start: start.start,
+            end: end.end
+        }
+    }
 }
 
 pub struct Lexer {
     input: String,
     position: usize,
     len: usize,
-    ch: char
+    ch: char,
+    line_column: LineColumn
 }
 
 impl Lexer {
     pub fn new(input: String) -> Self {
         let mut lexer = Self {
             position: 0,
+            line_column: LineColumn { line: 1, column: 1 },
             len: input.chars().count(),
             input: input,
             ch: '\0'
         };
 
-        lexer.read_char();
+        if lexer.len > 1 {
+            lexer.ch = lexer.input.chars().nth(lexer.position).unwrap();
+            lexer.position += 1;
+        }
 
         lexer
     }
 
-    pub fn next_token(&mut self) -> Result<(Token, Span), CompileError> {
+    pub fn next_token(&mut self) -> Result<Token, CompileError> {
         self.skip_whitespace();
 
         while self.ch == '/' && self.peek() == '/' {
@@ -116,99 +181,94 @@ impl Lexer {
             self.skip_whitespace();
         }
 
-        let start = self.position - 1;
+        let start = self.line_column;
 
         let token = match self.ch {
-            '('  => Token::LeftParen,
-            ')'  => Token::RightParen,
-            '{'  => Token::LeftBrace,
-            '}'  => Token::RightBrace,
-            '['  => Token::LeftBracket,
-            ']'  => Token::RightBracket,
-            ';'  => Token::SemiColon,
-            ':'  => Token::Colon,
-            ','  => Token::Comma,
-            '.'  => Token::Dot,
-            '+'  => Token::Plus,
-            '-'  => Token::Minus,
-            '*'  => Token::Asterisk,
-            '^'  => Token::Carat,
-            '/'  => Token::Slash,
-            '%'  => Token::Modulo,
+            '('  => TokenKind::LeftParen,
+            ')'  => TokenKind::RightParen,
+            '{'  => TokenKind::LeftBrace,
+            '}'  => TokenKind::RightBrace,
+            '['  => TokenKind::LeftBracket,
+            ']'  => TokenKind::RightBracket,
+            ';'  => TokenKind::SemiColon,
+            ':'  => TokenKind::Colon,
+            ','  => TokenKind::Comma,
+            '.'  => {
+                if self.peek() == '.' { self.read_char(); TokenKind::DotDot } else { TokenKind::Dot }
+            },
+            '+'  => TokenKind::Plus,
+            '-'  => TokenKind::Minus,
+            '*'  => TokenKind::Star,
+            '^'  => TokenKind::Caret,
+            '/'  => TokenKind::Slash,
+            '%'  => TokenKind::Percent,
+            '&' => {
+                if self.peek() == '&' { self.read_char(); TokenKind::AndAnd } else { TokenKind::And }
+            },
+            '|' => {
+                if self.peek() == '|' { self.read_char(); TokenKind::OrOr } else { TokenKind::Or }
+            },
             '!' => {
-                if self.peek() == '=' { self.read_char(); Token::NotEqual } else { Token::Bang }
+                if self.peek() == '=' { self.read_char(); TokenKind::NotEq } else { TokenKind::Not }
             },
             '=' => {
-                if self.peek() == '=' { self.read_char(); Token::Equal } else { Token::Assign }
+                if self.peek() == '=' { self.read_char(); TokenKind::EqEq } else { TokenKind::Eq }
             },
             '>' => {
-                if self.peek() == '=' { self.read_char(); Token::GreaterEqual } else { Token::Greater }
+                if self.peek() == '=' { self.read_char(); TokenKind::Ge } else { TokenKind::Gt }
             },
             '<' => {
-                if self.peek() == '=' { self.read_char(); Token::LessEqual } else { Token::Less }
+                if self.peek() == '=' { self.read_char(); TokenKind::Le } else { TokenKind::Lt }
             },
             '0'..='9' => {
                 let a = self.read_number();
-
-                if self.ch != '\0' {
-                    self.position -= 1;
-                }
 
                 a
             },
             '"' => {
                 let a = self.read_string();
 
-                if self.ch != '\0' {
-                    // self.position -= 1;
-                }
-
                 a
             },
             'a'..='z' | 'A'..='Z' | '_' | '\u{4E00}'..='\u{9FFF}' => {
                 let ident = self.read_ident();
 
-                if self.ch != '\0' {
-                    self.position -= 1;
-                }
-
                 match ident.as_str() {
-                    "let"    => Token::Let,
-                    "fn"     => Token::Fn,
-                    "if"     => Token::If,
-                    "else"   => Token::Else,
-                    "true"   => Token::Literal(Literal::Boolean(true)),
-                    "false"  => Token::Literal(Literal::Boolean(false)),
-                    "return" => Token::Return,
-                    _        => Token::Ident(ident)
+                    "let"    => TokenKind::Let,
+                    "fn"     => TokenKind::Fn,
+                    "if"     => TokenKind::If,
+                    "else"   => TokenKind::Else,
+                    "true"   => TokenKind::Literal(Literal::Boolean(true)),
+                    "false"  => TokenKind::Literal(Literal::Boolean(false)),
+                    "while"  => TokenKind::While,
+                    "return" => TokenKind::Return,
+                    "extern" => TokenKind::Extern,
+                    "struct" => TokenKind::Struct,
+                    _        => TokenKind::Ident(ident)
                 }
             },
             n if is_emoji(n) => {
                 let ident = self.read_ident();
 
-                if self.ch != '\0' {
-                    self.position -= 1;
-                }
-
-                Token::Ident(ident)
+                TokenKind::Ident(ident)
             },
-            '\0' => Token::EOF,
+            '\0' => TokenKind::EOF,
             n => {
-                return Err(CompileError::IllegalToken(n, Span { start, end: start + 1 }));
+                return Err(CompileError::IllegalToken(n, start));
             }
         };
 
-        let end = self.position;
+        let end = self.line_column;
 
         self.read_char();
 
-        Ok((token, Span { start, end }))
+        Ok(Token::new(token, Span { start, end }))
     }
 
-    pub fn read_number(&mut self) -> Token {
+    pub fn read_number(&mut self) -> TokenKind {
         let mut ident = String::new();
         let mut decimal = false;
-        while self.ch.is_digit(10) || self.ch == '.' {
+        loop {
             if self.ch == '.' {
                 if decimal {
                     break;
@@ -218,33 +278,44 @@ impl Lexer {
             }
             
             ident.write_char(self.ch).unwrap();
-            self.read_char();
+
+            if self.peek().is_digit(10) || self.peek() == '.' {
+                self.read_char();
+            } else {
+                break;
+            }
         }
 
         if decimal {
-            Token::from(ident.parse::<f64>().unwrap())
+            TokenKind::from(ident.parse::<f64>().unwrap())
         } else {
-            Token::from(ident.parse::<i64>().unwrap())
+            TokenKind::from(ident.parse::<i64>().unwrap())
         }
     }
 
-    pub fn read_string(&mut self) -> Token {
+    pub fn read_string(&mut self) -> TokenKind {
         let mut out = String::new();
         self.read_char();
         
-        while self.ch != '\0' && self.ch != '"' {
+        while self.ch != '\0' && self.ch != '"'  {
             out.write_char(self.ch).unwrap();
             self.read_char();
         }
         
-        Token::Literal(Literal::String(out))
+        TokenKind::Literal(Literal::String(out))
     }
 
     pub fn read_ident(&mut self) -> String {
         let mut ident = String::new();
-        while self.ch.is_ascii_alphanumeric() || self.ch == '_' || (self.ch >= '\u{4E00}' && self.ch <= '\u{9FFF}') || is_emoji(self.ch) {
+
+        loop {
             ident.write_char(self.ch).unwrap();
-            self.read_char();
+
+            if self.peek().is_ascii_alphanumeric() || self.peek() == '_' || (self.peek() >= '\u{4E00}' && self.peek() <= '\u{9FFF}') || is_emoji(self.peek()) {
+                self.read_char();
+            } else {
+                break;
+            }
         }
         
         ident
@@ -262,6 +333,13 @@ impl Lexer {
         if self.position >= self.len {
             self.ch = '\0' ;
         } else {
+            if self.ch == '\n' {
+                self.line_column.line += 1;
+                self.line_column.column = 1;
+            } else {
+               self.line_column.column += 1; 
+            }
+
             self.ch = self.input.chars().nth(self.position).unwrap();
             self.position += 1;
         }

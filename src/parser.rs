@@ -1,12 +1,19 @@
 use std::collections::VecDeque;
 
-use crate::{lexer::{Lexer, Token, Literal as lexer_Literal, Span}, ast::{Expr, Literal, BinaryOp, Node, UnaryOp, Stmt}, err::CompileError};
+use crate::{
+    ast::{
+        ArrExpr, AssignExpr, BinaryExpr, BinaryOp, Block, Expr, FunctionCallExpr,
+        FunctionDeclaration, IndexExpr, LocalDeclaration, MethodCallExpr, Parameter,
+        Return, Stmt, UnaryExpr, UnaryOp, ExprKind, StmtKind, NamedParameter, If, While, Field, Struct,
+    },
+    err::CompileError,
+    lexer::{Lexer, Span, TokenKind, Token},
+};
 
 pub struct Parser {
     lexer: Lexer,
-    tokens: VecDeque<(Token, Span)>
+    tokens: VecDeque<Token>,
 }
-
 
 // AssignmentExpr
 // MemberExpr
@@ -22,47 +29,48 @@ impl Parser {
     pub fn new(input: String) -> Self {
         let mut lexer = Lexer::new(input);
         let mut tokens = VecDeque::new();
-        
+
         while let Ok(token) = lexer.next_token() {
-            if token.0 == Token::EOF {
+            if token.kind == TokenKind::EOF {
                 break;
             }
 
             tokens.push_back(token);
         }
 
-        // println!("{:?}", tokens);
+        println!("{:#?}", tokens);
 
-        Self {
-            lexer,
-            tokens
-        }
+        Self { lexer, tokens }
     }
 
-    pub fn peek(&mut self) -> Result<&(Token, Span), CompileError> {
+    pub fn peek(&mut self) -> Result<&Token, CompileError> {
         match self.tokens.get(0) {
             Some(val) => Ok(val),
-            None      => Err(CompileError::Other("Reached EOF without expected token".to_string()))
+            None => Err(CompileError::Other(
+                "Reached EOF without expected token".to_string(),
+            )),
         }
     }
 
-    pub fn chomp(&mut self) -> Result<(Token, Span), CompileError> {
+    pub fn chomp(&mut self) -> Result<Token, CompileError> {
         match self.tokens.pop_front() {
             Some(val) => Ok(val),
-            None      => Err(CompileError::Other("Reached EOF without expected token".to_string()))
+            None => Err(CompileError::Other(
+                "Reached EOF without expected token".to_string(),
+            )),
         }
     }
 
-    pub fn expect(&mut self, token: Token) -> Result<(Token, Span), CompileError> {
+    pub fn expect(&mut self, token: TokenKind) -> Result<Token, CompileError> {
         let peek = self.peek()?.clone();
-        if peek.0 == token {
+        if peek.kind == token {
             self.chomp()
         } else {
-            Err(CompileError::UnexpectedToken(peek.0, token, peek.1))
+            Err(CompileError::UnexpectedToken(peek.kind, token, peek.span.start))
         }
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Node<Stmt>>, CompileError> {
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, CompileError> {
         let mut body = Vec::new();
 
         while !self.tokens.is_empty() {
@@ -72,333 +80,660 @@ impl Parser {
         Ok(body)
     }
 
-    pub fn parse_stmt(&mut self) -> Result<Node<Stmt>, CompileError> {
-        match &self.peek()?.0 {
-            Token::Let => self.parse_declaration(),
-            Token::Fn => self.parse_function(),
-            _ => {
-                if !self.tokens.is_empty() {
-                    let start = self.peek()?.1.start;
-                    let expr = self.parse_expr()?;
-                    let end = self.peek()?.1.end;
-
-                    self.expect(Token::SemiColon)?;
-
-                    while !self.tokens.is_empty() && self.peek()?.0 == Token::SemiColon {
-                        self.chomp()?;
-                    }
-
-                    return Ok(Node::new(Stmt::Semi(expr), Span { start, end }));
-                } else {
-                    return Err(CompileError::Other("Invalid statement".to_string()));
-                }
-            }
+    pub fn parse_stmt(&mut self) -> Result<Stmt, CompileError> {
+        match &self.peek()?.kind {
+            TokenKind::Let    => self.parse_declaration(),
+            TokenKind::Fn     => self.parse_function(),
+            TokenKind::Return => self.parse_return(),
+            TokenKind::If     => self.parse_if(),
+            TokenKind::While  => self.parse_while(),
+            TokenKind::Extern => self.parse_extern(),
+            TokenKind::Struct => self.parse_struct(),
+            _                 => self.parse_semi() 
         }
     }
 
-    pub fn parse_declaration(&mut self) -> Result<Node<Stmt>, CompileError> {
-        if !self.tokens.is_empty() && self.peek()?.0 == Token::Let {
-            let start = self.peek()?.1.start;
+    fn parse_struct(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.chomp()?.span;
+
+        let ident = self.parse_primary()?.into();
+
+        self.expect(TokenKind::LeftBrace)?;
+
+        let mut fields = Vec::new();
+
+        while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightBrace {
+            let ident = self.parse_primary()?.into();
+            self.expect(TokenKind::Colon)?;
+            let ty = self.parse_primary()?.into();
+
+            let field = Field {
+                ident,
+                ty
+            };
+
+            fields.push(field);
+
+            if self.peek()?.kind != TokenKind::RightBrace {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+
+        let end = self.expect(TokenKind::RightBrace)?.span;
+        let span = Span::merge(start, end);
+        let kind = StmtKind::Struct(Struct {
+            ident,
+            fields
+        });
+
+        Ok(Stmt {
+            kind,
+            span
+        })
+    }
+
+    fn parse_semi(&mut self) -> Result<Stmt, CompileError> {
+        let expr = self.parse_expr()?;
+
+        let start = expr.span;
+        let end = self.expect(TokenKind::SemiColon)?.span;
+
+        while !self.tokens.is_empty() && self.peek()?.kind == TokenKind::SemiColon {
+            self.chomp()?;
+        }
+
+        let span = Span::merge(start, end);
+        let kind = StmtKind::Semi(expr);
+
+        Ok(Stmt { 
+            kind, 
+            span
+        })
+    }
+
+    fn parse_return(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.chomp()?.span;
+
+        let mut ret = None;
+
+        if self.peek()?.kind != TokenKind::SemiColon {
+            ret.insert(self.parse_expr()?);
+        }
+
+        let end = self.expect(TokenKind::SemiColon)?.span;
+
+        let span = Span::merge(start, end);
+        let kind = StmtKind::Return(Return { ret });
+        Ok(Stmt {
+            kind, 
+            span
+        })
+    }
+
+    fn parse_if(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.chomp()?.span;
+
+        let cond = self.parse_expr()?;
+
+        self.expect(TokenKind::LeftBrace)?;
+
+        let mut stmts = Vec::new();
+
+        while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightBrace {
+            let stmt = self.parse_stmt()?;
+            stmts.push(stmt);
+        }
+
+        let then_branch = Block { stmts };
+        let mut else_branch = None;
+
+        let mut end = self.chomp()?.span;
+
+        if !self.tokens.is_empty() && self.peek()?.kind == TokenKind::Else {
+            self.chomp()?;
+            self.expect(TokenKind::LeftBrace)?;
+
+            let mut stmts = Vec::new();
+
+            while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightBrace {
+                let stmt = self.parse_stmt()?;
+                stmts.push(stmt);
+            }
+
+            else_branch.insert(Block { stmts });
+
+            end = self.chomp()?.span;
+        }
+
+        let span = Span::merge(start, end);
+        let kind = StmtKind::If(If { cond, then_branch, else_branch });
+        Ok(Stmt {
+            kind, 
+            span
+        })
+    }
+
+    fn parse_while(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.chomp()?.span;
+
+        let cond = self.parse_expr()?;
+        
+        self.expect(TokenKind::LeftBrace)?;
+        let mut stmts = Vec::new();
+
+        while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightBrace {
+            let stmt = self.parse_stmt()?;
+            stmts.push(stmt);
+        }
+
+        let end = self.chomp()?.span;
+
+        let span = Span::merge(start, end);
+        let block = Block { stmts };
+        let kind = StmtKind::While(While { cond, block });
+
+        Ok(Stmt {
+            kind, 
+            span
+        })
+    }
+
+    fn parse_extern(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.chomp()?.span;
+        self.expect(TokenKind::LeftBrace)?;
+
+        let mut stmts = Vec::new();
+
+        while !self.tokens.is_empty() && self.peek()?.kind == TokenKind::Fn {
+            let start = self.peek()?.span;
 
             self.chomp()?;
 
-            if let Token::Ident(ident) = self.chomp()?.0 {
-                self.expect(Token::Assign)?;
+            if let TokenKind::Ident(ident) = self.chomp()?.kind {
+                self.expect(TokenKind::LeftParen)?;
 
-                let expr = self.parse_expr()?;
+                let mut params = Vec::new();
 
-                let end = self.peek()?.1.end;
+                while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightParen {
+                    if self.peek()?.kind == TokenKind::DotDot {
+                        self.chomp()?;
+                        params.push(Parameter::Variadic);
+                    } else {
+                        let ident_expr = self.parse_primary()?;
+                        self.expect(TokenKind::Colon)?;
+
+                        let reference = self.peek()?.kind == TokenKind::And;
+                        if reference {
+                            self.chomp()?;
+                        }
+
+                        let ty_expr = self.parse_primary()?;
+    
+                        if let (ExprKind::IdentExpr(ident), ExprKind::IdentExpr(ty)) = (ident_expr.kind, ty_expr.kind) {
+                            params.push(Parameter::NamedParameter(NamedParameter {
+                                ident,
+                                ty,
+                                reference
+                            }));
+                        }
+                    }
+
+                    if self.peek()?.kind != TokenKind::RightParen {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                }
+
+                self.chomp()?;
+
+                let output = {
+                    if self.peek()?.kind == TokenKind::Colon {
+                        self.chomp()?;
+
+                        if let TokenKind::Ident(out) = &self.chomp()?.kind {
+                            out.to_string()
+                        } else {
+                            return Err(CompileError::Other("Expected an identifier".to_string()));
+                        }
+                    } else {
+                        "void".to_string()
+                    }
+                };
+
+                let end = self.expect(TokenKind::SemiColon)?.span;
+
+                let span = Span::merge(start, end);
+                let kind = StmtKind::ForeignFn(ident, params, output);
+
+                let stmt = Stmt {
+                    kind,
+                    span,
+                };
+
+                stmts.push(stmt);
+            }
+        }
+
+        let end = self.expect(TokenKind::RightBrace)?.span;
+        let span = Span::merge(start, end);
+        let kind = StmtKind::Extern(Block { stmts });
+        Ok(Stmt {
+            kind,
+            span,
+        })
+    }
+
+    fn parse_declaration(&mut self) -> Result<Stmt, CompileError> {
+        if !self.tokens.is_empty() && self.peek()?.kind == TokenKind::Let {
+            let start = self.chomp()?.span;
+
+            if let TokenKind::Ident(ident) = self.chomp()?.kind {
+
+                let mut ty = None;
+
+                if self.peek()?.kind == TokenKind::Colon {
+                    self.chomp()?;
+
+
+                    if let TokenKind::Ident(n) = self.chomp()?.kind {
+                        ty.insert(n);
+                    }
+                }
+
+                let mut value = None; 
                 
-                self.expect(Token::SemiColon)?;
+                if self.peek()?.kind == TokenKind::Eq {
+                    self.chomp()?;
 
-                while !self.tokens.is_empty() && self.peek()?.0 == Token::SemiColon {
+                    value.insert(self.parse_expr()?);
+                }
+
+                let end = self.expect(TokenKind::SemiColon)?.span;
+
+                while !self.tokens.is_empty() && self.peek()?.kind == TokenKind::SemiColon {
                     self.chomp()?;
                 }
-        
-                return Ok(Node::new(Stmt::LocalDeclaration(ident, expr), Span { start, end }));
+
+                let span = Span::merge(start, end);
+                let kind = StmtKind::LocalDeclaration(LocalDeclaration { 
+                    ident, 
+                    ty,
+                    value 
+                });
+
+                return Ok(Stmt {
+                    kind,
+                    span,
+                });
             }
         }
 
-        Err(CompileError::Other("Invalid variable declaration".to_string()))
+        Err(CompileError::Other(
+            "Invalid variable declaration".to_string(),
+        ))
     }
 
-    pub fn parse_function(&mut self) -> Result<Node<Stmt>, CompileError> {
-        if !self.tokens.is_empty() && self.peek()?.0 == Token::Fn {
-            let start = self.peek()?.1.start;
+    fn parse_function(&mut self) -> Result<Stmt, CompileError> {
+        if !self.tokens.is_empty() && self.peek()?.kind == TokenKind::Fn {
+            let start = self.chomp()?.span;
 
-            self.chomp()?;
+            if let TokenKind::Ident(ident) = self.chomp()?.kind {
+                self.expect(TokenKind::LeftParen)?;
 
-            if let Token::Ident(ident) = self.chomp()?.0 {
-                self.expect(Token::LeftParen)?;
+                let mut params = Vec::new();
 
-                let mut args = Vec::new();
+                while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightParen {
+                    if self.peek()?.kind == TokenKind::DotDot {
+                        self.chomp()?;
+                        params.push(Parameter::Variadic);
+                    } else {
+                        let ident_expr = self.parse_primary()?;
+                        self.expect(TokenKind::Colon)?;
 
-                while !self.tokens.is_empty() && self.peek()?.0 != Token::RightParen {
-                    let arg = self.parse_expr()?;
-                    args.push(arg);
-                    if self.peek()?.0 != Token::RightParen {
-                        self.expect(Token::Comma)?;
+                        let reference = self.peek()?.kind == TokenKind::And;
+                        if reference {
+                            self.chomp()?;
+                        }
+
+                        let ty_expr = self.parse_primary()?;
+    
+                        if let (ExprKind::IdentExpr(ident), ExprKind::IdentExpr(ty)) = (ident_expr.kind, ty_expr.kind) {
+                            params.push(Parameter::NamedParameter(NamedParameter {
+                                ident,
+                                ty,
+                                reference
+                            }));
+                        }
+                    }
+
+                    if self.peek()?.kind != TokenKind::RightParen {
+                        self.expect(TokenKind::Comma)?;
                     }
                 }
 
                 self.chomp()?;
 
-                self.expect(Token::LeftBrace)?;
+                let output = {
+                    if self.peek()?.kind == TokenKind::Colon {
+                        self.chomp()?;
 
-                let mut block = Vec::new();
+                        if let TokenKind::Ident(out) = &self.chomp()?.kind {
+                            out.to_string()
+                        } else {
+                            return Err(CompileError::Other("Expected an identifier".to_string()));
+                        }
+                    } else {
+                        "void".to_string()
+                    }
+                };
 
-                while !self.tokens.is_empty() && self.peek()?.0 != Token::RightBrace {
+                self.expect(TokenKind::LeftBrace)?;
+
+                let mut stmts = Vec::new();
+
+                while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightBrace {
                     let stmt = self.parse_stmt()?;
-                    block.push(stmt);
+                    stmts.push(stmt);
                 }
 
-                let end = self.peek()?.1.end;
+                let end = self.chomp()?.span;
 
-                self.chomp()?;
-        
-                return Ok(Node::new(Stmt::FunctionDeclaration(ident, args, block), Span { start, end }));
+                let block = Block { stmts };
+                let span = Span::merge(start, end);
+                let kind = StmtKind::FunctionDeclaration(FunctionDeclaration {
+                    ident,
+                    params,
+                    output,
+                    block,
+                });
+
+                return Ok(Stmt {
+                    kind,
+                    span
+                });
             }
         }
 
-        Err(CompileError::Other("Invalid function declaration".to_string()))
+        Err(CompileError::Other(
+            "Invalid function declaration".to_string(),
+        ))
     }
 
-    pub fn parse_expr(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_expr(&mut self) -> Result<Expr, CompileError> {
         self.parse_assign()
     }
 
-    pub fn parse_assign(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_assign(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_comparison()?;
+        let start = left.span;
 
-        if !self.tokens.is_empty() && self.peek()?.0 == Token::Assign {
+        if !self.tokens.is_empty() && self.peek()?.kind == TokenKind::Eq {
             self.chomp()?;
 
             let val = self.parse_assign()?;
 
-            let span = Span { start: left.span.start, end: val.span.end };
-        
-            left = Node::new(Expr::AssignExpr { left: Box::new(left), right: Box::new(val) }, span);
+            let end = val.span;
+
+            let span = Span::merge(start, end);
+            let kind = ExprKind::AssignExpr(AssignExpr {
+                left: Box::new(left),
+                right: Box::new(val),
+            });
+
+            left = Expr {
+                kind,
+                span,
+            };
         }
 
         Ok(left)
     }
 
-    pub fn parse_comparison(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_comparison(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_add()?;
+        let start = left.span;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::Equal || 
-            self.peek()?.0 == Token::NotEqual ||
-            self.peek()?.0 == Token::Greater ||
-            self.peek()?.0 == Token::GreaterEqual ||
-            self.peek()?.0 == Token::Less ||
-            self.peek()?.0 == Token::LessEqual
-        ) {
-            let op = match self.chomp()?.0 {
-                Token::Equal        => BinaryOp::Eq,
-                Token::NotEqual     => BinaryOp::Ne,
-                Token::Greater      => BinaryOp::Gt,
-                Token::GreaterEqual => BinaryOp::Ge,
-                Token::Less         => BinaryOp::Lt,
-                Token::LessEqual    => BinaryOp::Le,
+        while !self.tokens.is_empty()
+            && (self.peek()?.kind == TokenKind::EqEq
+                || self.peek()?.kind == TokenKind::NotEq
+                || self.peek()?.kind == TokenKind::Gt
+                || self.peek()?.kind == TokenKind::Ge
+                || self.peek()?.kind == TokenKind::Lt
+                || self.peek()?.kind == TokenKind::Le)
+        {
+            let op = match self.chomp()?.kind {
+                TokenKind::EqEq => BinaryOp::Eq,
+                TokenKind::NotEq => BinaryOp::Ne,
+                TokenKind::Gt => BinaryOp::Gt,
+                TokenKind::Ge => BinaryOp::Ge,
+                TokenKind::Lt => BinaryOp::Lt,
+                TokenKind::Le => BinaryOp::Le,
                 _ => {
                     break;
                 }
             };
 
             let right = self.parse_add()?;
+            let end = right.span;
 
-            let span = Span { start: left.span.start, end: right.span.end };
+            let span = Span::merge(start, end);
+            let kind = ExprKind::BinaryExpr(BinaryExpr {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            });
 
-            left = Node::new(Expr::BinaryExpr {
-                    op, 
-                    left: Box::new(left), 
-                    right: Box::new(right)
-                }, span);
+            left = Expr {
+                kind,
+                span,
+            };
         }
 
         Ok(left)
     }
 
-    pub fn parse_add(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_add(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_mul()?;
+        let start = left.span;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::Plus || 
-            self.peek()?.0 == Token::Minus
-        ) {
-            let op = match self.chomp()?.0 {
-                Token::Plus  => BinaryOp::Add,
-                Token::Minus => BinaryOp::Sub,
+        while !self.tokens.is_empty()
+            && (self.peek()?.kind == TokenKind::Plus || 
+                self.peek()?.kind == TokenKind::Minus)
+        {
+            let op = match self.chomp()?.kind {
+                TokenKind::Plus => BinaryOp::Add,
+                TokenKind::Minus => BinaryOp::Sub,
                 _ => {
                     break;
                 }
             };
 
             let right = self.parse_mul()?;
+            let end = right.span;
 
-            let span = Span { start: left.span.start, end: right.span.end };
+            let span = Span::merge(start, end);
+            let kind = ExprKind::BinaryExpr(BinaryExpr {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            });
 
-            left = Node::new(Expr::BinaryExpr {
-                    op, 
-                    left: Box::new(left), 
-                    right: Box::new(right)
-                }, span);
+            left = Expr {
+                kind,
+                span,
+            };
         }
 
         Ok(left)
     }
 
-    pub fn parse_mul(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_mul(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_exp()?;
+        let start = left.span;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::Asterisk || 
-            self.peek()?.0 == Token::Slash || 
-            self.peek()?.0 == Token::Modulo
-        ) {
-            let op = match self.chomp()?.0 {
-                Token::Asterisk => BinaryOp::Mul,
-                Token::Slash    => BinaryOp::Div,
-                Token::Modulo   => BinaryOp::Mod,
+        while !self.tokens.is_empty()
+            && (self.peek()?.kind == TokenKind::Star
+                || self.peek()?.kind == TokenKind::Slash
+                || self.peek()?.kind == TokenKind::Percent)
+        {
+            let op = match self.chomp()?.kind {
+                TokenKind::Star => BinaryOp::Mul,
+                TokenKind::Slash => BinaryOp::Div,
+                TokenKind::Percent => BinaryOp::Mod,
                 _ => {
                     break;
                 }
             };
 
             let right = self.parse_exp()?;
+            let end = right.span;
 
-            let span = Span { start: left.span.start, end: right.span.end };
+            let span = Span::merge(start, end);
+            let kind = ExprKind::BinaryExpr(BinaryExpr {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            });
 
-            left = Node::new(Expr::BinaryExpr {
-                op, 
-                left: Box::new(left), 
-                right: Box::new(right)
-            }, span);
+            left = Expr {
+                kind,
+                span,
+            };
         }
 
         Ok(left)
     }
 
-    pub fn parse_exp(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_exp(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_unary()?;
+        let start = left.span;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::Carat
-        ) {
-            let op = match self.chomp()?.0 {
-                Token::Carat => BinaryOp::Pow,
+        while !self.tokens.is_empty() && (self.peek()?.kind == TokenKind::Caret) {
+            let op = match self.chomp()?.kind {
+                TokenKind::Caret => BinaryOp::Pow,
                 _ => {
                     break;
                 }
             };
 
             let right = self.parse_unary()?;
+            let end = right.span;
 
-            let span = Span { start: left.span.start, end: right.span.end };
+            let span = Span::merge(start, end);
+            let kind = ExprKind::BinaryExpr(BinaryExpr {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            });
 
-            left = Node::new(Expr::BinaryExpr {
-                op, 
-                left: Box::new(left), 
-                right: Box::new(right)
-            }, span);
+            left = Expr {
+                kind,   
+                span,
+            };
         }
 
         Ok(left)
     }
 
-    pub fn parse_unary(&mut self) -> Result<Node<Expr>, CompileError> {
-        if !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::Bang || 
-            self.peek()?.0 == Token::Minus
-        ) {
-            let op = match self.chomp()?.0 {
-                Token::Bang  => UnaryOp::Bang,
-                Token::Minus => UnaryOp::Sub,
-                _ => todo!()
+    fn parse_unary(&mut self) -> Result<Expr, CompileError> {
+        if !self.tokens.is_empty() && (self.peek()?.kind == TokenKind::Not || self.peek()?.kind == TokenKind::Minus) {
+            let start = self.peek()?.span;
+
+            let op = match self.chomp()?.kind {
+                TokenKind::Not => UnaryOp::Not,
+                TokenKind::Minus => UnaryOp::Neg,
+                _ => todo!(),
             };
 
             // TODO : parse_primary. does it break?
             let expr = self.parse_call()?;
 
-            let span = Span { start: expr.span.start - 1, end: expr.span.end };
+            let span = Span::merge(start, expr.span);
+            let kind = ExprKind::UnaryExpr(UnaryExpr {
+                op,
+                expr: Box::new(expr),
+            });
 
-            Ok(Node::new(Expr::UnaryExpr {
-                op, 
-                expr: Box::new(expr)
-            }, span))
+            Ok(Expr {
+                kind,    
+                span,
+            })
         } else {
             self.parse_call()
         }
     }
 
-    pub fn parse_call(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_call(&mut self) -> Result<Expr, CompileError> {
         let mut object = self.parse_member()?;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::LeftParen
-        ) {
-            let start = self.peek()?.1.start;
-
-            self.chomp()?;
+        while !self.tokens.is_empty() && (self.peek()?.kind == TokenKind::LeftParen) {
+            let start = self.chomp()?.span;
 
             let mut args = Vec::new();
 
-            while !self.tokens.is_empty() && self.peek()?.0 != Token::RightParen {
+            while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightParen {
                 let arg = self.parse_expr()?;
                 args.push(arg);
-                if self.peek()?.0 != Token::RightParen {
-                    self.expect(Token::Comma)?;
+                if self.peek()?.kind != TokenKind::RightParen {
+                    self.expect(TokenKind::Comma)?;
                 }
             }
 
-            self.chomp()?;
+            let end = self.chomp()?.span;
 
-            let end = self.peek()?.1.end;
+            let span = Span::merge(start, end);
 
-            let span = Span { start, end };
+            if let ExprKind::IdentExpr(func) = object.kind {
+                let kind = ExprKind::FunctionCallExpr(FunctionCallExpr { 
+                    func, 
+                    args 
+                });
 
-            if let Expr::IdentExpr(func) = object.val {
-                object = Node::new(Expr::FunctionCallExpr { func, args }, span);
+                object = Expr {
+                    kind,
+                    span,
+                };
             }
         }
 
         Ok(object)
     }
 
-    pub fn parse_member(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_member(&mut self) -> Result<Expr, CompileError> {
         let object = self.parse_index()?;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::Dot
-        ) {
-            let start = self.peek()?.1.start;
-
-            self.chomp()?;
+        while !self.tokens.is_empty() && (self.peek()?.kind == TokenKind::Dot) {
+            let start = self.chomp()?.span;
 
             let member = self.parse_primary()?;
 
-            if self.peek()?.0 == Token::LeftParen {
+            if self.peek()?.kind == TokenKind::LeftParen {
                 self.chomp()?;
 
                 let mut args = Vec::new();
 
-                while !self.tokens.is_empty() && self.peek()?.0 != Token::RightParen {
+                while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightParen {
                     let arg = self.parse_expr()?;
                     args.push(arg);
-                    if self.peek()?.0 != Token::RightParen {
-                        self.expect(Token::Comma)?;
+                    if self.peek()?.kind != TokenKind::RightParen {
+                        self.expect(TokenKind::Comma)?;
                     }
                 }
-    
-                self.chomp()?;
 
-                let end = self.peek()?.1.end;
+                let end = self.chomp()?.span;
 
-                let span = Span { start, end };
+                let span = Span::merge(start, end);
 
-                if let (Expr::IdentExpr(receiver), Expr::IdentExpr(method)) = (object.val.clone(), member.val) {
-                    return Ok(Node::new(Expr::MethodCallExpr { receiver, method, args }, span));
+                if let (ExprKind::IdentExpr(receiver), ExprKind::IdentExpr(method)) = (object.kind.clone(), member.kind) {
+                    let kind = ExprKind::MethodCallExpr(MethodCallExpr {
+                        receiver,
+                        method,
+                        args,
+                    });
+
+                    return Ok(Expr {
+                        kind, 
+                        span
+                    });
                 }
             } else {
                 return Ok(object);
@@ -408,97 +743,109 @@ impl Parser {
         Ok(object)
     }
 
-    pub fn parse_index(&mut self) -> Result<Node<Expr>, CompileError> {
+    fn parse_index(&mut self) -> Result<Expr, CompileError> {
         let mut object = self.parse_array()?;
 
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::LeftBracket
-        ) {
-            let start = self.peek()?.1.start;
-
-            self.chomp()?;
+        while !self.tokens.is_empty() && (self.peek()?.kind == TokenKind::LeftBracket) {
+            let start = self.chomp()?.span;
 
             // let mut args = Vec::new();
 
-            // while !self.tokens.is_empty() && self.peek()?.0 != Token::RightParen {
+            // while !self.tokens.is_empty() && self.peek()?.kind != Token::RightParen {
             //     let arg = self.parse_expr();
             //     args.push(arg);
-            //     if self.peek()?.0 != Token::RightParen {
+            //     if self.peek()?.kind != Token::RightParen {
             //         self.expect(Token::Comma);
             //     }
             // }
 
             let index = self.parse_expr()?;
-            
-            self.chomp()?;
 
-            let end = self.peek()?.1.end;
+            let end = self.chomp()?.span;
 
-            let span = Span { start, end };
+            let kind = ExprKind::IndexExpr(IndexExpr { 
+                expr: Box::new(object), 
+                index: Box::new(index)
+            });
+            let span = Span::merge(start, end);
 
-            object = Node::new(Expr::IndexExpr { expr: Box::new(object), index: Box::new(index) }, span);
+            object = Expr { kind, span };
         }
 
         Ok(object)
     }
 
-    
-    pub fn parse_array(&mut self) -> Result<Node<Expr>, CompileError> {
-        while !self.tokens.is_empty() && (
-            self.peek()?.0 == Token::LeftBracket
-        ) {
-            let start = self.peek()?.1.start;
+    fn parse_array(&mut self) -> Result<Expr, CompileError> {
+        while !self.tokens.is_empty() && (self.peek()?.kind == TokenKind::LeftBracket) {
+            let start = self.chomp()?.span;
 
-            self.chomp()?;
+            let mut elems = Vec::new();
 
-            let mut args = Vec::new();
-
-            while !self.tokens.is_empty() && self.peek()?.0 != Token::RightBracket {
+            while !self.tokens.is_empty() && self.peek()?.kind != TokenKind::RightBracket {
                 let arg = self.parse_expr()?;
-                args.push(arg);
-                if self.peek()?.0 != Token::RightBracket {
-                    self.expect(Token::Comma)?;
+                elems.push(arg);
+                if self.peek()?.kind != TokenKind::RightBracket {
+                    self.expect(TokenKind::Comma)?;
                 }
             }
 
-            self.chomp()?;
+            let end = self.chomp()?.span;
 
-            let end = self.peek()?.1.end;
+            let kind = ExprKind::ArrExpr(ArrExpr { elems });
+            let span = Span::merge(start, end);
 
-            let span = Span { start, end };
-
-            return Ok(Node::new(Expr::ArrExpr(args), span));
+            return Ok(Expr { kind, span });
         }
 
-        self.parse_primary()
+        self.parse_reference()
     }
 
-    pub fn parse_primary(&mut self) -> Result<Node<Expr>, CompileError> {
-        let expr = match &self.peek()?.0 {
-            Token::Ident(ident) => Expr::IdentExpr(ident.to_owned()),
-            Token::Literal(lit) => {
-                match lit {
-                    lexer_Literal::Boolean(n) => Expr::LiteralExpr(Literal::Boolean(n.to_owned())),
-                    lexer_Literal::Integer(n) => Expr::LiteralExpr(Literal::Integer(n.to_owned())),
-                    lexer_Literal::Decimal(n) => Expr::LiteralExpr(Literal::Decimal(n.to_owned())),
-                    lexer_Literal::String(n)  => Expr::LiteralExpr(Literal::String(n.to_owned()))
-                }
-            },
-            Token::LeftParen => {
-                self.chomp()?;
-                let node = self.parse_expr()?;
-                if self.tokens.is_empty() || self.peek()?.0 != Token::RightParen {
-                    return Err(CompileError::UnbalancedToken(Token::RightParen, node.span));
-                }
+    fn parse_reference(&mut self) -> Result<Expr, CompileError> {
+        if !self.tokens.is_empty() && self.peek()?.kind == TokenKind::And {
+            let start = self.chomp()?.span;
+            let rvalue = self.parse_primary()?;
+            let end = rvalue.span;
 
-                node.val
+            let span = Span::merge(start, end);
+
+            if let ExprKind::IdentExpr(ident) = rvalue.kind {
+                let kind = ExprKind::ReferenceExpr(ident);
+                Ok(Expr { 
+                    kind, 
+                    span 
+                })
+            } else {
+                Err(CompileError::Other("Expected an identifier".to_string()))
             }
 
-            _ => return Err(CompileError::Other("Unexpected expression".to_string()))
+        } else {
+            self.parse_primary()
+        }
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr, CompileError> {
+        let start = self.peek()?.span;
+
+        let kind = match &self.peek()?.kind {
+            TokenKind::Ident(ident) => ExprKind::IdentExpr(ident.to_owned()),
+            TokenKind::Literal(lit) => ExprKind::LiteralExpr(lit.to_owned()),
+            TokenKind::LeftParen => {
+                self.chomp()?;
+                let expr = self.parse_expr()?;
+
+                if self.tokens.is_empty() || self.peek()?.kind != TokenKind::RightParen {
+                    return Err(CompileError::UnbalancedToken(TokenKind::RightParen, expr.span.start));
+                }
+
+                expr.kind
+            }
+
+            n => return Err(CompileError::Other(format!("Unexpected expression {:?}", n))),
         };
 
-        let chomp = self.chomp()?;
+        let end = self.chomp()?.span;
+        let span = Span::merge(start, end);
 
-        Ok(Node::new(expr, chomp.1))
+        Ok(Expr { kind, span })
     }
 }

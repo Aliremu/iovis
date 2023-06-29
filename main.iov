@@ -1,13 +1,41 @@
-fn test() {
-    let mat = [
-        [1, 2],
-        [3, 4],
-    ];
+//import lib;
 
-    let x = print;
-    let det = mat.det();
+extern {
+    fn printf(format: string, ..);
+    fn scanf(format: string, ..): i32;
+    fn fgets(format: string, n: i32, stream: i32): string;
 
-    x(det);
+    fn SDL_Init(flag: i32): i32;
+    fn SDL_CreateWindow(title: string, x_pos: i32, y_pos: i32, width: i32, height: i32, flags: i32): i32;
+    fn SDL_PollEvent(event: &SDL_Event): i32;
+    fn SDL_Delay(delay: i32);
 }
 
-test();
+// Size of SDL_Event union
+struct SDL_Event {
+    padding1: i64,
+    padding2: i64,
+    padding3: i64,
+    padding4: i64,
+    padding5: i64,
+    padding6: i64,
+    padding7: i64,
+}
+
+fn main() {
+    let init = SDL_Init(32);
+    let window = SDL_CreateWindow("Title", 805240832, 805240832, 1000, 1000, 0);
+
+    while true {
+        run();  
+    }
+}
+
+fn run() {
+    let event: SDL_Event;
+    let status = 1;
+
+    while SDL_PollEvent(&event) != 0 {
+        printf("%p\n", &event);
+    }
+}

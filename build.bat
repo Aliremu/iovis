@@ -1,0 +1,1 @@
+cargo build --release && cp ./target/release/iovis.exe ./iovis.exe
