@@ -1,0 +1,66 @@
+struct SDL_Rect { 
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+struct SDL_Window { }
+struct SDL_Surface { }
+struct SDL_Renderer { }
+struct SDL_Texture { }
+struct SDL_Event {
+    type: u32,
+    padding1: u32,
+    padding2: i64,
+    padding3: i64,
+    padding4: i64,
+    padding5: i64,
+    padding6: i64,
+    padding7: i64,
+}
+
+extern {
+    fn SDL_Init(flag: i32): i32;
+    fn SDL_CreateWindow(title: string, x_pos: i32, y_pos: i32, width: i32, height: i32, flags: i32): &SDL_Window;
+    fn SDL_PollEvent(event: &SDL_Event): i32;
+    fn SDL_Delay(delay: i32);
+    fn SDL_Quit();
+
+    fn SDL_CreateRenderer(window: &SDL_Window, index: i32, flags: u32): &SDL_Renderer;
+    fn SDL_SetRenderDrawColor(renderer: &SDL_Renderer, r: i32, g: i32, b: i32, a: i32);
+    fn SDL_RenderCopy(renderer: &SDL_Renderer, text: &SDL_Texture, src: i32, dst: i32): i32;
+    fn SDL_RenderPresent(renderer: &SDL_Renderer);
+    fn SDL_RenderClear(renderer: &SDL_Renderer): i32;
+    fn SDL_CreateTextureFromSurface(renderer: &SDL_Renderer, surface: &SDL_Surface): &SDL_Texture;
+    fn SDL_FreeSurface(surface: &SDL_Surface);
+
+    fn SDL_GetError(): string;
+
+    fn IMG_Init(flags: i32): i32;
+    fn IMG_Load(path: string): &SDL_Surface;
+}
+
+fn sdl_init(flags: i32) {
+    SDL_Init(flags);
+}
+
+fn sdl_create_window(title: string, x_pos: i32, y_pos: i32, width: i32, height: i32, flags: i32): &SDL_Window {
+    return SDL_CreateWindow(title, x_pos, y_pos, width, height, flags);
+}
+
+fn sdl_create_renderer(window: &SDL_Window, index: i32, flags: u32): &SDL_Renderer {
+    return SDL_CreateRenderer(window, index, flags);
+}
+
+fn sdl_poll_event(event: &SDL_Event): i32 {
+    return SDL_PollEvent(event);
+}
+
+fn img_init(flags: i32) {
+    IMG_Init(flags);
+}
+
+fn sdl_quit() {
+    SDL_Quit();
+}

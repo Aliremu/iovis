@@ -1,16 +1,16 @@
-use std::{error::Error, io::Result, any::Any, collections::HashMap};
+use std::{error::Error, io::Result, any::Any, collections::HashMap, ops::DerefMut, fs};
 
 use inkwell::{
     builder::Builder,
     context::Context,
     module::{Module, Linkage},
     targets::{CodeModel, FileType, RelocMode, Target, TargetMachine, InitializationConfig, TargetData},
-    values::{IntValue, BasicValueEnum, BasicValue, FloatValue, InstructionOpcode, FunctionValue, BasicMetadataValueEnum},
-    OptimizationLevel, types::{BasicMetadataTypeEnum, IntType, ArrayType, FunctionType, FloatType, VoidType, BasicTypeEnum, PointerType, BasicType}, AddressSpace, IntPredicate, FloatPredicate,
+    values::{IntValue, BasicValueEnum, BasicValue, FloatValue, InstructionOpcode, FunctionValue, BasicMetadataValueEnum, InstructionValue},
+    OptimizationLevel, types::{BasicMetadataTypeEnum, IntType, ArrayType, FunctionType, FloatType, VoidType, BasicTypeEnum, PointerType, BasicType, AnyType, AnyTypeEnum}, AddressSpace, IntPredicate, FloatPredicate, passes::{PassManager, PassManagerBuilder},
 };
 
 use crate::{
-    ast::{BinaryOp, Expr, Stmt, BinaryExpr, UnaryExpr, UnaryOp, FunctionCallExpr, FunctionDeclaration, Parameter, NamedParameter, StmtKind, ExprKind, If, While, Struct},
+    ast::{BinaryOp, Expr, Stmt, BinaryExpr, UnaryExpr, UnaryOp, FunctionCallExpr, FunctionDeclaration, Parameter, NamedParameter, StmtKind, ExprKind, If, While, Struct, MemberExpr, AssignExpr, TyKind, Block},
     parser::Parser, lexer::Literal,
 };
 
@@ -257,7 +257,6 @@ impl<'ctx> Not<'ctx> for BasicValueEnum<'ctx> {
     }
 }
 
-
 trait Gt<'ctx, Rhs = Self> {
     type Output;
 
@@ -304,6 +303,57 @@ impl<'ctx> Gt<'ctx, BasicValueEnum<'ctx>> for BasicValueEnum<'ctx> {
         match rhs {
             BasicValueEnum::IntValue(val)   => self.gt(val, compiler),
             BasicValueEnum::FloatValue(val) => self.gt(val, compiler),
+            _ => panic!("")
+        }
+    }
+}
+
+trait Lt<'ctx, Rhs = Self> {
+    type Output;
+
+    fn lt(self, rhs: Rhs, compiler: &Compiler<'ctx>) -> Self::Output;
+}
+
+impl<'ctx> Lt<'ctx, IntValue<'ctx>> for BasicValueEnum<'ctx> {
+    type Output = BasicValueEnum<'ctx>;
+    
+    fn lt(self, rhs: IntValue<'ctx>, compiler: &Compiler<'ctx>) -> Self::Output {
+        match self {
+            BasicValueEnum::IntValue(val)   => compiler.builder.build_int_compare(IntPredicate::SLT, val, rhs, "tmplt").into(),
+            BasicValueEnum::FloatValue(val) => {
+                let conv = compiler.builder.build_cast(InstructionOpcode::SIToFP, rhs, compiler.context.f64_type(), "conv").into_float_value();
+
+                compiler.builder.build_float_compare(FloatPredicate::OLT, val, conv, "tmplt").into()
+            }
+            _ => panic!("{:?}", self)
+        }
+    }
+}
+
+impl<'ctx> Lt<'ctx, FloatValue<'ctx>> for BasicValueEnum<'ctx> {
+    type Output = BasicValueEnum<'ctx>;
+    
+    fn lt(self, rhs: FloatValue<'ctx>, compiler: &Compiler<'ctx>) -> Self::Output {
+        match self {
+            BasicValueEnum::IntValue(val)   => {
+                let conv = compiler.builder.build_cast(InstructionOpcode::SIToFP, val, compiler.context.f64_type(), "conv").into_float_value();
+
+                compiler.builder.build_float_compare(FloatPredicate::OLT, conv, rhs, "tmplt").into()
+            }
+            BasicValueEnum::FloatValue(val) => compiler.builder.build_float_compare(FloatPredicate::OLT, val, rhs, "tmplt").into(),
+
+            _ => panic!("")
+        }
+    }
+}
+
+impl<'ctx> Lt<'ctx, BasicValueEnum<'ctx>> for BasicValueEnum<'ctx> {
+    type Output = BasicValueEnum<'ctx>;
+    
+    fn lt(self, rhs: BasicValueEnum<'ctx>, compiler: &Compiler<'ctx>) -> Self::Output {
+        match rhs {
+            BasicValueEnum::IntValue(val)   => self.lt(val, compiler),
+            BasicValueEnum::FloatValue(val) => self.lt(val, compiler),
             _ => panic!("")
         }
     }
@@ -359,6 +409,59 @@ impl<'ctx> Ne<'ctx, BasicValueEnum<'ctx>> for BasicValueEnum<'ctx> {
         }
     }
 }
+
+
+trait Eq<'ctx, Rhs = Self> {
+    type Output;
+
+    fn eq(self, rhs: Rhs, compiler: &Compiler<'ctx>) -> Self::Output;
+}
+
+impl<'ctx> Eq<'ctx, IntValue<'ctx>> for BasicValueEnum<'ctx> {
+    type Output = BasicValueEnum<'ctx>;
+    
+    fn eq(self, rhs: IntValue<'ctx>, compiler: &Compiler<'ctx>) -> Self::Output {
+        match self {
+            BasicValueEnum::IntValue(val)   => compiler.builder.build_int_compare(IntPredicate::EQ, val, rhs, "tmpeq").into(),
+            BasicValueEnum::FloatValue(val) => {
+                let conv = compiler.builder.build_cast(InstructionOpcode::SIToFP, rhs, compiler.context.f64_type(), "conv").into_float_value();
+
+                compiler.builder.build_float_compare(FloatPredicate::OEQ, val, conv, "tmpeq").into()
+            }
+            _ => panic!("{:?}", self)
+        }
+    }
+}
+
+impl<'ctx> Eq<'ctx, FloatValue<'ctx>> for BasicValueEnum<'ctx> {
+    type Output = BasicValueEnum<'ctx>;
+    
+    fn eq(self, rhs: FloatValue<'ctx>, compiler: &Compiler<'ctx>) -> Self::Output {
+        match self {
+            BasicValueEnum::IntValue(val)   => {
+                let conv = compiler.builder.build_cast(InstructionOpcode::SIToFP, val, compiler.context.f64_type(), "conv").into_float_value();
+
+                compiler.builder.build_float_compare(FloatPredicate::OEQ, conv, rhs, "tmpeq").into()
+            }
+            BasicValueEnum::FloatValue(val) => compiler.builder.build_float_compare(FloatPredicate::OEQ, val, rhs, "tmpeq").into(),
+
+            _ => panic!("")
+        }
+    }
+}
+
+impl<'ctx> Eq<'ctx, BasicValueEnum<'ctx>> for BasicValueEnum<'ctx> {
+    type Output = BasicValueEnum<'ctx>;
+    
+    fn eq(self, rhs: BasicValueEnum<'ctx>, compiler: &Compiler<'ctx>) -> Self::Output {
+        match rhs {
+            BasicValueEnum::IntValue(val)   => self.eq(val, compiler),
+            BasicValueEnum::FloatValue(val) => self.eq(val, compiler),
+            _ => panic!("")
+        }
+    }
+}
+
 
 #[derive(Clone, Copy)]
 pub enum BuiltinType {
@@ -520,10 +623,12 @@ impl<'ctx> Compiler<'ctx> {
             BinaryOp::Sub => left.sub(right, self),
             BinaryOp::Mul => left.mul(right, self),
             BinaryOp::Div => left.div(right, self),
-            BinaryOp::Gt  => left.gt(right, self),
+            BinaryOp::Eq  => left.eq(right, self),
             BinaryOp::Ne  => left.ne(right, self),
+            BinaryOp::Gt  => left.gt(right, self),
+            BinaryOp::Lt  => left.lt(right, self),
             // BinaryOp::Mod => Ok(self.builder.build_int_signed_rem(left, right, "tmprem")),
-            _ => panic!("NOT IMPLEMENTED BINARY EXPR"),
+            n => panic!("NOT IMPLEMENTED BINARY EXPR {:?}", n),
         };
 
         Ok(out)
@@ -637,7 +742,7 @@ impl<'ctx> Compiler<'ctx> {
                     if p.is_some() {
                         return Ok(p.unwrap());
                     } else {
-                        let ptr = self.symbols.get(&ident).unwrap();
+                        let ptr = self.symbols.get(&ident).expect(&format!("{:?}", expr.span));
 
                         //TODO: UGLY
                         /*let load = match ptr.0 {
@@ -647,11 +752,16 @@ impl<'ctx> Compiler<'ctx> {
                             BasicMetadataTypeEnum::ArrayType(_) => self.builder.build_load(self.type_u8.array_type(56), ptr.1.into_pointer_value(), &ident),
                             _ => panic!("wtf mnan")
                         };*/
+
+                        if ptr.0.is_pointer_type() {
+                            //return Ok((*ptr).1);
+                        }
+
                         let load = self.builder.build_load(ptr.0, ptr.1.into_pointer_value(), &ident);
                         // let load = self.builder.build_load(self.type_i8, ptr.into_pointer_value(), &ident);
                         println!("Ident Get {:?}", load.get_type());
 
-                        // return Ok(*ptr);
+                        // 
                         
                         return Ok(load);
                     }
@@ -691,7 +801,42 @@ impl<'ctx> Compiler<'ctx> {
                 // Ok(*self.symbols.get(&ident).unwrap())
             },
 
+            ExprKind::MemberExpr(MemberExpr { receiver, member }) => {
+                let var = self.symbols.get(&receiver).unwrap();
+                let ptr = var.1;
+                let ty  = var.0;
+
+                let load = self.builder.build_load(self.type_u32, ptr.into_pointer_value(), &receiver);
+                Ok(load)
+                // self.context.get_struct_type()
+                // Ok(self.builder.build_struct_gep(ty, ptr.into_pointer_value(), 0, "tmpgep").unwrap().into())
+            },
+
+            ExprKind::AssignExpr(AssignExpr { left, right }) => {
+                let left: String = (*left).into();
+                let val = self.compile_expr(*right)?;
+                let ptr = self.symbols.get(&left).unwrap();
+
+                let load = self.builder.build_store(ptr.1.into_pointer_value(), val);
+
+                Ok(val)
+            }
+
             _ => panic!("WTF {:?}", expr)
+        }
+    }
+
+    fn type_from_kind(&self, ty: &TyKind) -> BasicTypeEnum<'ctx> {
+        let ret = if let Some(builtin) = BuiltinType::by_name(&ty.get_ident()) {
+            self.from_builtin(builtin)
+        } else {
+            self.context.get_struct_type(&ty.get_ident()).unwrap().into()
+        };
+
+        if ty.is_reference() {
+            ret.ptr_type(AddressSpace::default()).into()
+        } else {
+            ret
         }
     }
 
@@ -702,44 +847,24 @@ impl<'ctx> Compiler<'ctx> {
         let variadic = func.params.iter().any(|x| *x == Parameter::Variadic);
 
         for param in &func.params {
-            if let Parameter::NamedParameter(NamedParameter { ident, ty, reference }) = param {
-                let mut param = self.from_builtin(BuiltinType::by_name(&ty).unwrap());
-                if *reference {
-                    param = param.ptr_type(AddressSpace::default()).into();
-                }
-
-                params.push(param.into());
+            if let Parameter::NamedParameter(NamedParameter { ident, ty }) = param {
+                params.push(self.type_from_kind(ty).into());
             }
         }
 
-        let mut is_void = false;
+        if func.output.is_void() {
+            self.type_void.fn_type(params.as_slice(), variadic)
+        } else {
+            let ty: BasicTypeEnum = match BuiltinType::by_name(&func.output.get_ident()) {
+                Some(n) => self.from_builtin(n),
+                None => self.context.get_struct_type(&func.output.get_ident()).unwrap().into(),
+            };
 
-        let fn_type = match BuiltinType::by_name(&func.output).unwrap() {
-            BuiltinType::Bool   => self.type_bool.fn_type(params.as_slice(), variadic),
-            BuiltinType::Char   => self.type_char.fn_type(params.as_slice(), variadic),
-
-            BuiltinType::Usize  => self.type_usize.fn_type(params.as_slice(), variadic),
-            BuiltinType::U8     => self.type_u8.fn_type(params.as_slice(), variadic),
-            BuiltinType::U16    => self.type_u16.fn_type(params.as_slice(), variadic),
-            BuiltinType::U32    => self.type_u32.fn_type(params.as_slice(), variadic),
-            BuiltinType::U64    => self.type_u64.fn_type(params.as_slice(), variadic),
-            BuiltinType::U128   => self.type_u128.fn_type(params.as_slice(), variadic),
-
-            BuiltinType::I8     => self.type_i8.fn_type(params.as_slice(), variadic),
-            BuiltinType::I16    => self.type_i16.fn_type(params.as_slice(), variadic),
-            BuiltinType::I32    => self.type_i32.fn_type(params.as_slice(), variadic),
-            BuiltinType::I64    => self.type_i64.fn_type(params.as_slice(), variadic),
-            BuiltinType::I128   => self.type_i128.fn_type(params.as_slice(), variadic),
-
-            BuiltinType::F32    => self.type_f32.fn_type(params.as_slice(), variadic),
-            BuiltinType::F64    => self.type_f64.fn_type(params.as_slice(), variadic),
-
-            BuiltinType::String => self.type_str.fn_type(params.as_slice(), variadic),
-            BuiltinType::Void   => {
-                is_void = true;
-                self.type_void.fn_type(params.as_slice(), variadic)
-            },
-            _                   => panic!()
+            if func.output.is_reference() {
+                ty.ptr_type(AddressSpace::default()).fn_type(params.as_slice(), variadic)
+            } else {
+                ty.fn_type(params.as_slice(), variadic)
+            }
         };
 
         let function = *self.functions.get(&func.ident).unwrap(); //self.module.add_function(&func.ident, fn_type, None);
@@ -750,7 +875,7 @@ impl<'ctx> Compiler<'ctx> {
         // self.builder.build_va_arg(list, type_, name)
 
         for (index, param) in func.params.iter().enumerate() {
-            if let Parameter::NamedParameter(NamedParameter { ident, ty, reference }) = param {
+            if let Parameter::NamedParameter(NamedParameter { ident, ty }) = param {
                 function.get_nth_param(index as u32).unwrap().set_name(&ident);
                 // self.symbols.insert(param.ident.val.clone(), function.get_nth_param(i).unwrap().into());
             }
@@ -767,13 +892,82 @@ impl<'ctx> Compiler<'ctx> {
             self.compile_stmt(stmt);
         }
 
-        if is_void {
+        if func.output.is_void() {
             self.builder.build_return(None);
         } else {
             // self.builder.build_return(Some(&self.type_usize.const_int(1, true)));
         }
 
         self.cur_function = None;
+    }
+
+    fn declare_function(&mut self, ident: String, params: Vec<Parameter>, output: TyKind) {
+        let str_type  = self.context.i8_type().ptr_type(AddressSpace::default());
+        let void_type = self.context.void_type();
+
+        let test = params;
+
+        let mut params = Vec::new();
+
+        let variadic = test.iter().any(|x| *x == Parameter::Variadic);
+
+        for param in &test {
+            if let Parameter::NamedParameter(NamedParameter { ident, ty }) = param {
+                // let mut param = self.from_builtin(BuiltinType::by_name(&ty).unwrap());
+
+                let mut param: BasicTypeEnum<'ctx> = {
+                    if let Some(type_builtin) = BuiltinType::by_name(&ty.get_ident()) {
+                        self.from_builtin(type_builtin)
+                    } else {
+                        println!("declare_function wtf?");
+                        self.context.get_struct_type(&ty.get_ident()).unwrap().into()
+                    }
+                };
+
+                if ty.is_reference() {
+                    param = param.ptr_type(AddressSpace::default()).into();
+                }
+
+                params.push(param.into());
+            }
+        }
+
+        //TODO
+        // println!("{:?}", params);
+
+        if variadic {
+            params.clear();
+        }
+
+        let fn_type = if output.is_void() {
+            self.type_void.fn_type(params.as_slice(), variadic)
+        } else {
+            let ty: BasicTypeEnum = match BuiltinType::by_name(&output.get_ident()) {
+                Some(n) => self.from_builtin(n),
+                None => self.context.get_struct_type(&output.get_ident()).unwrap().into(),
+            };
+
+            if output.is_reference() {
+                ty.ptr_type(AddressSpace::default()).fn_type(params.as_slice(), variadic)
+            } else {
+                ty.fn_type(params.as_slice(), variadic)
+            }
+        };
+
+        let function = match self.module.get_function(&ident) {
+            Some(func) => func,
+            None => self.module.add_function(&ident, fn_type, Some(Linkage::External))
+        };
+        
+        self.functions.insert(ident, function);
+    }
+
+    fn build_extern(&mut self, block: Block) {
+        for stmt in block.stmts {
+            if let StmtKind::ForeignFn(ident, params, output) = stmt.kind {
+                self.declare_function(ident, params, output);
+            }
+        }
     }
 
     fn compile_stmt(&mut self, stmt: Stmt) {
@@ -783,30 +977,49 @@ impl<'ctx> Compiler<'ctx> {
             },
 
             StmtKind::LocalDeclaration(stmt) => {
+                let current = self.builder.get_insert_block().unwrap();
+                let start = self.cur_function.unwrap().get_first_basic_block().unwrap();
+                
                 let mut val = None;
 
-                let ty = if stmt.value.is_some() {
-                    val.insert(self.compile_expr(stmt.value.unwrap()).unwrap());
+                if stmt.value.is_none() && stmt.ty.is_none() {
+                    panic!("Variable with ambiguous type!");
+                }
 
-                    val.unwrap().get_type()
-                } else {
-                    if let Some(type_builtin) = BuiltinType::by_name(&stmt.ty.as_ref().unwrap()) {
-                        self.from_builtin(type_builtin).into()
-                    } else {
-                        if let Some(typ) = stmt.ty {
-                            self.context.get_struct_type(&typ).unwrap().into()
+                let ty = match stmt.value {
+                    Some(v) => {
+                        val.insert(self.compile_expr(v).unwrap());
+                        val.unwrap().get_type()
+                    },
+
+                    None => {
+                        let ty = stmt.ty.as_ref().unwrap();
+
+                        if let Some(builtin) = BuiltinType::by_name(&ty.get_ident()) {
+                            self.from_builtin(builtin)
                         } else {
-                            panic!("Variable with ambiguous type!");
+                            self.context.get_struct_type(&ty.get_ident()).unwrap().into()
                         }
                     }
                 };
 
                 println!("Local Decl {:?}", ty);
 
+                if let Some(inst) = start.get_first_instruction() {
+                    self.builder.position_before(&inst);
+                } else {
+                    self.builder.position_at_end(current);
+                }
+
                 let ptr = self.builder.build_alloca(ty, &stmt.ident);
+                self.builder.position_at_end(current);
 
                 if val.is_some() {
                     self.builder.build_store(ptr, val.unwrap());
+                } else {
+                    if stmt.ty.is_some() && stmt.ty.unwrap().get_ident() == "SDL_Rect" {
+                        self.builder.build_store(ptr, self.context.get_struct_type("SDL_Rect").unwrap().const_zero());
+                    }
                 }
 
                 self.symbols.insert(stmt.ident, (ty.into(), ptr.into()));
@@ -825,85 +1038,7 @@ impl<'ctx> Compiler<'ctx> {
                 }
             },
 
-            StmtKind::Extern(block) => {
-                for stmt in block.stmts {
-                    if let StmtKind::ForeignFn(ident, params, output) = stmt.kind {
-                        let str_type  = self.context.i8_type().ptr_type(AddressSpace::default());
-                        let void_type = self.context.void_type();
-
-                        let test = params;
-
-                        let mut params = Vec::new();
-
-                        let variadic = test.iter().any(|x| *x == Parameter::Variadic);
-                
-                        for param in &test {
-                            if let Parameter::NamedParameter(NamedParameter { ident, ty, reference }) = param {
-                                // let mut param = self.from_builtin(BuiltinType::by_name(&ty).unwrap());
-
-                                let mut param: BasicTypeEnum<'ctx> = {
-                                    if let Some(type_builtin) = BuiltinType::by_name(&ty) {
-                                        self.from_builtin(type_builtin)
-                                    } else {
-                                        println!("wtf?");
-                                        self.context.get_struct_type(&ty).unwrap().into()
-                                    }
-                                };
-
-                                if *reference {
-                                    param = param.ptr_type(AddressSpace::default()).into();
-                                }
-                
-                                params.push(param.into());
-                            }
-                        }
-
-                        //TODO
-                        // println!("{:?}", params);
-
-                        if variadic {
-                            params.clear();
-                        }
-                
-                        let mut is_void = false;
-                
-                        let fn_type = match BuiltinType::by_name(&output).unwrap() {
-                            BuiltinType::Bool   => self.type_bool.fn_type(params.as_slice(), variadic),
-                            BuiltinType::Char   => self.type_char.fn_type(params.as_slice(), variadic),
-                
-                            BuiltinType::Usize  => self.type_usize.fn_type(params.as_slice(), variadic),
-                            BuiltinType::U8     => self.type_u8.fn_type(params.as_slice(), variadic),
-                            BuiltinType::U16    => self.type_u16.fn_type(params.as_slice(), variadic),
-                            BuiltinType::U32    => self.type_u32.fn_type(params.as_slice(), variadic),
-                            BuiltinType::U64    => self.type_u64.fn_type(params.as_slice(), variadic),
-                            BuiltinType::U128   => self.type_u128.fn_type(params.as_slice(), variadic),
-                
-                            BuiltinType::I8     => self.type_i8.fn_type(params.as_slice(), variadic),
-                            BuiltinType::I16    => self.type_i16.fn_type(params.as_slice(), variadic),
-                            BuiltinType::I32    => self.type_i32.fn_type(params.as_slice(), variadic),
-                            BuiltinType::I64    => self.type_i64.fn_type(params.as_slice(), variadic),
-                            BuiltinType::I128   => self.type_i128.fn_type(params.as_slice(), variadic),
-                
-                            BuiltinType::F32    => self.type_f32.fn_type(params.as_slice(), variadic),
-                            BuiltinType::F64    => self.type_f64.fn_type(params.as_slice(), variadic),
-                
-                            BuiltinType::String => str_type.fn_type(params.as_slice(), variadic),
-                            BuiltinType::Void   => {
-                                is_void = true;
-                                self.type_void.fn_type(params.as_slice(), variadic)
-                            },
-                            _                   => panic!()
-                        };
-                        
-                        let function = match self.module.get_function(&ident) {
-                            Some(func) => func,
-                            None => self.module.add_function(&ident, fn_type, Some(Linkage::External))
-                        };
-                        
-                        self.functions.insert(ident, function);
-                    }
-                }
-            },
+            StmtKind::Extern(block) => self.build_extern(block),
 
             StmtKind::If(If { cond, then_branch, else_branch }) => {
                 let cond = self.compile_expr(cond).unwrap();
@@ -978,6 +1113,7 @@ impl<'ctx> Compiler<'ctx> {
                 }
 
                 self.builder.build_unconditional_branch(while_block);
+                let body = self.builder.get_insert_block().unwrap();
 
                 self.builder.position_at_end(exit);
             },
@@ -994,6 +1130,8 @@ impl<'ctx> Compiler<'ctx> {
 
                 // println!("STRUCT {:?}", type_struct);
             },
+
+            StmtKind::Import(_) => {},
 
             _ => panic!("NO STMT YET")
         }
@@ -1025,12 +1163,13 @@ impl<'ctx> Compiler<'ctx> {
         let mut parser = Parser::new(program);
         let parsed = parser.parse().unwrap();
 
+        println!("{:#?}", parsed);
+
         for stmt in parsed {
             match stmt.kind {
                 StmtKind::FunctionDeclaration(FunctionDeclaration { ident, params, output, block: _ }) => {
                     let str_type  = self.context.i8_type().ptr_type(AddressSpace::default());
                     let void_type = self.context.void_type();
-
                     let test = params;
 
                     let mut params = Vec::new();
@@ -1038,19 +1177,19 @@ impl<'ctx> Compiler<'ctx> {
                     let variadic = test.iter().any(|x| *x == Parameter::Variadic);
             
                     for param in &test {
-                        if let Parameter::NamedParameter(NamedParameter { ident, ty, reference }) = param {
+                        if let Parameter::NamedParameter(NamedParameter { ident, ty }) = param {
                             // let mut param = self.from_builtin(BuiltinType::by_name(&ty).unwrap());
 
                             let mut param: BasicTypeEnum<'ctx> = {
-                                if let Some(type_builtin) = BuiltinType::by_name(&ty) {
+                                if let Some(type_builtin) = BuiltinType::by_name(&ty.get_ident()) {
                                     self.from_builtin(type_builtin)
                                 } else {
-                                    println!("wtf?");
-                                    self.context.get_struct_type(&ty).unwrap().into()
+                                    println!("FUNCTION DECLARE wtf?");
+                                    self.context.get_struct_type(&ty.get_ident()).unwrap().into()
                                 }
                             };
 
-                            if *reference {
+                            if ty.is_reference() {
                                 param = param.ptr_type(AddressSpace::default()).into();
                             }
             
@@ -1067,33 +1206,42 @@ impl<'ctx> Compiler<'ctx> {
             
                     let mut is_void = false;
             
-                    let fn_type = match BuiltinType::by_name(&output).unwrap() {
-                        BuiltinType::Bool   => self.type_bool.fn_type(params.as_slice(), variadic),
-                        BuiltinType::Char   => self.type_char.fn_type(params.as_slice(), variadic),
-            
-                        BuiltinType::Usize  => self.type_usize.fn_type(params.as_slice(), variadic),
-                        BuiltinType::U8     => self.type_u8.fn_type(params.as_slice(), variadic),
-                        BuiltinType::U16    => self.type_u16.fn_type(params.as_slice(), variadic),
-                        BuiltinType::U32    => self.type_u32.fn_type(params.as_slice(), variadic),
-                        BuiltinType::U64    => self.type_u64.fn_type(params.as_slice(), variadic),
-                        BuiltinType::U128   => self.type_u128.fn_type(params.as_slice(), variadic),
-            
-                        BuiltinType::I8     => self.type_i8.fn_type(params.as_slice(), variadic),
-                        BuiltinType::I16    => self.type_i16.fn_type(params.as_slice(), variadic),
-                        BuiltinType::I32    => self.type_i32.fn_type(params.as_slice(), variadic),
-                        BuiltinType::I64    => self.type_i64.fn_type(params.as_slice(), variadic),
-                        BuiltinType::I128   => self.type_i128.fn_type(params.as_slice(), variadic),
-            
-                        BuiltinType::F32    => self.type_f32.fn_type(params.as_slice(), variadic),
-                        BuiltinType::F64    => self.type_f64.fn_type(params.as_slice(), variadic),
-            
-                        BuiltinType::String => str_type.fn_type(params.as_slice(), variadic),
-                        BuiltinType::Void   => {
-                            is_void = true;
+                    let fn_type: FunctionType<'ctx> = if output.is_void() {
                             self.type_void.fn_type(params.as_slice(), variadic)
-                        },
-                        _                   => panic!()
-                    };
+                        } else {
+                            let ty: BasicTypeEnum = match BuiltinType::by_name(&output.get_ident()) {
+                                Some(n) => match n {
+                                    BuiltinType::Bool   => self.type_bool.into(),
+                                    BuiltinType::Char   => self.type_char.into(),
+                        
+                                    BuiltinType::Usize  => self.type_usize.into(),
+                                    BuiltinType::U8     => self.type_u8.into(),
+                                    BuiltinType::U16    => self.type_u16.into(),
+                                    BuiltinType::U32    => self.type_u32.into(),
+                                    BuiltinType::U64    => self.type_u64.into(),
+                                    BuiltinType::U128   => self.type_u128.into(),
+                        
+                                    BuiltinType::I8     => self.type_i8.into(),
+                                    BuiltinType::I16    => self.type_i16.into(),
+                                    BuiltinType::I32    => self.type_i32.into(),
+                                    BuiltinType::I64    => self.type_i64.into(),
+                                    BuiltinType::I128   => self.type_i128.into(),
+                        
+                                    BuiltinType::F32    => self.type_f32.into(),
+                                    BuiltinType::F64    => self.type_f64.into(),
+                        
+                                    BuiltinType::String => str_type.into(),
+                                    _ => panic!("VOID!")
+                                }
+                                None => self.context.get_struct_type(&output.get_ident()).unwrap().into(),
+                            };
+
+                            if output.is_reference() {
+                                ty.ptr_type(AddressSpace::default()).fn_type(params.as_slice(), variadic)
+                            } else {
+                                ty.fn_type(params.as_slice(), variadic)
+                            }
+                        };
                     
                     let function = match self.module.get_function(&ident) {
                         Some(func) => func,
@@ -1105,7 +1253,41 @@ impl<'ctx> Compiler<'ctx> {
 
                 StmtKind::Struct(Struct { ident, fields: _ }) => {
                     let type_struct = self.context.opaque_struct_type(&ident);
-                }
+                },
+
+                StmtKind::Import(file) => {
+                    let import = fs::read_to_string(file.clone() + ".iov").expect(format!("Import not found {}", file).as_str());
+                    let mut parser = Parser::new(import);
+                    let parsed = parser.parse().unwrap();
+
+                    for stmt in parsed {
+                        match stmt.kind {
+                            StmtKind::Struct(Struct { ident, fields }) => {
+                                let type_struct = self.context.opaque_struct_type(&ident);
+
+                                let mut field_types = Vec::new();
+
+                                for field in fields {
+                                    field_types.push(self.from_builtin(BuiltinType::by_name(&field.ty).unwrap()));
+                                }
+            
+                                type_struct.set_body(field_types.as_slice(), true);
+
+                                println!("{} {:?}", file, type_struct);
+                            },
+
+                            StmtKind::FunctionDeclaration(FunctionDeclaration { ident, params, output, block }) => {
+                                self.declare_function(ident, params, output);
+                            },
+
+                            StmtKind::Extern(block) => {
+                                self.build_extern(block);
+                            },
+
+                            _ => {}
+                        }
+                    }
+                },
 
                 _ => {}
             }
@@ -1113,12 +1295,19 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     pub fn write_to_file(&mut self, file: &str) -> Result<()> {
+        // let pass_manager: PassManager<Module> = PassManager::create(());
+        // pass_manager.add_licm_pass();
+        // pass_manager.run_on(&self.module);
+
         self.module.print_to_stderr();
+
         let target_triple = TargetMachine::get_default_triple();
         let cpu = TargetMachine::get_host_cpu_name().to_string();
         let features = TargetMachine::get_host_cpu_features().to_string();
 
         let target = Target::from_triple(&target_triple).map_err(|e| format!("{:?}", e)).unwrap();
+
+        
 
         let target_machine = target
             .create_target_machine(

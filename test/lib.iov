@@ -3,7 +3,3 @@ extern {
     fn scanf(format: string, ..): i32;
     fn fgets(format: string, n: i32, stream: i32): string;
 }
-
-fn print(format: string, ..) {
-    printf(format);
-}

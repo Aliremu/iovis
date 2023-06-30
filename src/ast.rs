@@ -446,7 +446,7 @@ pub enum UnaryOp {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct LocalDeclaration {
     pub ident: String, 
-    pub ty: Option<String>,
+    pub ty: Option<TyKind>,
     pub value: Option<Expr>
 }
 
@@ -455,12 +455,40 @@ pub struct Type {
     pub ident: String
 }
 
+// TODO
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum TyKind {
+    Reg(String),
+    Reference(Box<TyKind>),
+    Array(String),
+
+    Void
+}
+
+impl TyKind {
+    pub fn is_reference(&self) -> bool {
+        matches!(self, Self::Reference(_))
+    }
+
+    pub fn is_void(&self) -> bool {
+        matches!(self, Self::Void)
+    }
+
+    pub fn get_ident(&self) -> String {
+        match self {
+            Self::Array(n)     => n.to_string(),
+            Self::Reference(n) => (*n).get_ident(),
+            Self::Reg(n)       => n.to_string(),
+            Self::Void         => "void".to_string()
+        }
+    }
+}
+
 // TODO: References, sized arrays, ...
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct NamedParameter {
     pub ident: String, 
-    pub ty: String, 
-    pub reference: bool
+    pub ty: TyKind
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -473,7 +501,7 @@ pub enum Parameter {
 pub struct FunctionDeclaration {
     pub ident: String, 
     pub params: Vec<Parameter>,
-    pub output: String,
+    pub output: TyKind,
     pub block: Block
 }
 
@@ -515,8 +543,9 @@ pub enum StmtKind {
     Semi(Expr),
     Return(Return),
 
-    ForeignFn(String, Vec<Parameter>, String),
+    ForeignFn(String, Vec<Parameter>, TyKind),
 
+    Import(String),
     Extern(Block),
 
     Struct(Struct),
@@ -588,12 +617,10 @@ pub struct MethodCallExpr {
     pub args: Vec<Expr>,
 }
 
-// TODO
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub enum TyKind {
-    Reg,
-    Reference,
-    Array
+pub struct MemberExpr {
+    pub receiver: String,
+    pub member: String
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -607,6 +634,7 @@ pub enum ExprKind {
     UnaryExpr(UnaryExpr),
     AssignExpr(AssignExpr),
     BlockExpr(Block),
+    MemberExpr(MemberExpr),
     // TODO: String ?
     FunctionCallExpr(FunctionCallExpr),
     MethodCallExpr(MethodCallExpr),

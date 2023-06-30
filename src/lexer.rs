@@ -79,6 +79,7 @@ pub enum TokenKind {
 
     Struct,
 
+    Import,
     Extern,
 
     Illegal,
@@ -242,6 +243,7 @@ impl Lexer {
                     "false"  => TokenKind::Literal(Literal::Boolean(false)),
                     "while"  => TokenKind::While,
                     "return" => TokenKind::Return,
+                    "import" => TokenKind::Import,
                     "extern" => TokenKind::Extern,
                     "struct" => TokenKind::Struct,
                     _        => TokenKind::Ident(ident)

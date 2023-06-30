@@ -1,41 +1,46 @@
-//import lib;
+import lib;
+import sdl;
 
-extern {
-    fn printf(format: string, ..);
-    fn scanf(format: string, ..): i32;
-    fn fgets(format: string, n: i32, stream: i32): string;
+fn load_texture(renderer: &SDL_Renderer, path: string): &SDL_Texture {
+    let loaded_surface: &SDL_Surface = IMG_Load(path);
 
-    fn SDL_Init(flag: i32): i32;
-    fn SDL_CreateWindow(title: string, x_pos: i32, y_pos: i32, width: i32, height: i32, flags: i32): i32;
-    fn SDL_PollEvent(event: &SDL_Event): i32;
-    fn SDL_Delay(delay: i32);
-}
+    let new_texture = SDL_CreateTextureFromSurface(renderer, loaded_surface);
+    //if new_texture == 0 {
+    //    printf("Unable to create texture from %s! SDL Error: %s\n", path, SDL_GetError());
+    //}
 
-// Size of SDL_Event union
-struct SDL_Event {
-    padding1: i64,
-    padding2: i64,
-    padding3: i64,
-    padding4: i64,
-    padding5: i64,
-    padding6: i64,
-    padding7: i64,
+    SDL_FreeSurface(loaded_surface);
+
+    return new_texture;
 }
 
 fn main() {
-    let init = SDL_Init(32);
-    let window = SDL_CreateWindow("Title", 805240832, 805240832, 1000, 1000, 0);
+    let init = sdl_init(32);
+    let window = sdl_create_window("Title", 805240832, 805240832, 1000, 1000, 32);
+    let renderer = sdl_create_renderer(window, -1, 2);
+    img_init(2);
+
+    let texture = load_texture(renderer, "image.png");
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+
+    printf("Texture %p\n", texture);
 
     while true {
-        run();  
-    }
-}
+        let event: SDL_Event;
+        while sdl_poll_event(&event) != 0 {
+            if event.type == 256 {
+                printf("QUIT%d\n", event.type);
+                sdl_quit();
+                return;
+            }
+        }
 
-fn run() {
-    let event: SDL_Event;
-    let status = 1;
+        SDL_RenderClear(renderer);
 
-    while SDL_PollEvent(&event) != 0 {
-        printf("%p\n", &event);
+        SDL_RenderCopy(renderer, texture, 0, 0);
+
+        SDL_RenderPresent(renderer);
     }
+
+    sdl_quit();
 }

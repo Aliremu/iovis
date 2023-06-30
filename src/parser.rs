@@ -4,7 +4,7 @@ use crate::{
     ast::{
         ArrExpr, AssignExpr, BinaryExpr, BinaryOp, Block, Expr, FunctionCallExpr,
         FunctionDeclaration, IndexExpr, LocalDeclaration, MethodCallExpr, Parameter,
-        Return, Stmt, UnaryExpr, UnaryOp, ExprKind, StmtKind, NamedParameter, If, While, Field, Struct,
+        Return, Stmt, UnaryExpr, UnaryOp, ExprKind, StmtKind, NamedParameter, If, While, Field, Struct, MemberExpr, TyKind,
     },
     err::CompileError,
     lexer::{Lexer, Span, TokenKind, Token},
@@ -38,7 +38,7 @@ impl Parser {
             tokens.push_back(token);
         }
 
-        println!("{:#?}", tokens);
+        // println!("{:#?}", tokens);
 
         Self { lexer, tokens }
     }
@@ -87,10 +87,25 @@ impl Parser {
             TokenKind::Return => self.parse_return(),
             TokenKind::If     => self.parse_if(),
             TokenKind::While  => self.parse_while(),
+            TokenKind::Import => self.parse_import(),
             TokenKind::Extern => self.parse_extern(),
             TokenKind::Struct => self.parse_struct(),
             _                 => self.parse_semi() 
         }
+    }
+
+    fn parse_import(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.chomp()?.span;
+        let ident = self.parse_primary()?.into();
+
+        let end = self.expect(TokenKind::SemiColon)?.span;
+        let span = Span::merge(start, end);
+        let kind = StmtKind::Import(ident);
+
+        Ok(Stmt { 
+            kind, 
+            span
+        })
     }
 
     fn parse_struct(&mut self) -> Result<Stmt, CompileError> {
@@ -259,23 +274,14 @@ impl Parser {
                         self.chomp()?;
                         params.push(Parameter::Variadic);
                     } else {
-                        let ident_expr = self.parse_primary()?;
+                        let ident = self.parse_primary()?.into();
                         self.expect(TokenKind::Colon)?;
-
-                        let reference = self.peek()?.kind == TokenKind::And;
-                        if reference {
-                            self.chomp()?;
-                        }
-
-                        let ty_expr = self.parse_primary()?;
+                        let ty = self.parse_ty()?;
     
-                        if let (ExprKind::IdentExpr(ident), ExprKind::IdentExpr(ty)) = (ident_expr.kind, ty_expr.kind) {
-                            params.push(Parameter::NamedParameter(NamedParameter {
-                                ident,
-                                ty,
-                                reference
-                            }));
-                        }
+                        params.push(Parameter::NamedParameter(NamedParameter {
+                            ident,
+                            ty
+                        }));
                     }
 
                     if self.peek()?.kind != TokenKind::RightParen {
@@ -289,13 +295,9 @@ impl Parser {
                     if self.peek()?.kind == TokenKind::Colon {
                         self.chomp()?;
 
-                        if let TokenKind::Ident(out) = &self.chomp()?.kind {
-                            out.to_string()
-                        } else {
-                            return Err(CompileError::Other("Expected an identifier".to_string()));
-                        }
+                        self.parse_ty()?
                     } else {
-                        "void".to_string()
+                        TyKind::Void
                     }
                 };
 
@@ -333,10 +335,7 @@ impl Parser {
                 if self.peek()?.kind == TokenKind::Colon {
                     self.chomp()?;
 
-
-                    if let TokenKind::Ident(n) = self.chomp()?.kind {
-                        ty.insert(n);
-                    }
+                    ty.insert(self.parse_ty()?);
                 }
 
                 let mut value = None; 
@@ -386,23 +385,15 @@ impl Parser {
                         self.chomp()?;
                         params.push(Parameter::Variadic);
                     } else {
-                        let ident_expr = self.parse_primary()?;
+                        let ident = self.parse_primary()?.into();
                         self.expect(TokenKind::Colon)?;
+                        let ty = self.parse_ty()?;
+                        
 
-                        let reference = self.peek()?.kind == TokenKind::And;
-                        if reference {
-                            self.chomp()?;
-                        }
-
-                        let ty_expr = self.parse_primary()?;
-    
-                        if let (ExprKind::IdentExpr(ident), ExprKind::IdentExpr(ty)) = (ident_expr.kind, ty_expr.kind) {
-                            params.push(Parameter::NamedParameter(NamedParameter {
-                                ident,
-                                ty,
-                                reference
-                            }));
-                        }
+                        params.push(Parameter::NamedParameter(NamedParameter {
+                            ident,
+                            ty
+                        }));
                     }
 
                     if self.peek()?.kind != TokenKind::RightParen {
@@ -416,13 +407,9 @@ impl Parser {
                     if self.peek()?.kind == TokenKind::Colon {
                         self.chomp()?;
 
-                        if let TokenKind::Ident(out) = &self.chomp()?.kind {
-                            out.to_string()
-                        } else {
-                            return Err(CompileError::Other("Expected an identifier".to_string()));
-                        }
+                        self.parse_ty()?
                     } else {
-                        "void".to_string()
+                        TyKind::Void
                     }
                 };
 
@@ -456,6 +443,30 @@ impl Parser {
         Err(CompileError::Other(
             "Invalid function declaration".to_string(),
         ))
+    }
+
+    fn parse_ty(&mut self) -> Result<TyKind, CompileError> {
+        let reference = self.peek()?.kind == TokenKind::And;
+        if reference {
+            self.chomp()?;
+        }
+
+        let ty_expr = self.parse_primary()?;
+
+        let ty = if self.peek()?.kind == TokenKind::LeftBracket {
+            self.chomp()?;
+            self.expect(TokenKind::RightBracket)?;
+
+            TyKind::Array(ty_expr.into())
+        } else {
+            TyKind::Reg(ty_expr.into())
+        };
+
+        if reference {
+            Ok(TyKind::Reference(Box::new(ty)))
+        } else {
+            Ok(ty)
+        }
     }
 
     fn parse_expr(&mut self) -> Result<Expr, CompileError> {
@@ -736,7 +747,18 @@ impl Parser {
                     });
                 }
             } else {
-                return Ok(object);
+                let end = member.span;
+
+                let span = Span::merge(start, end);
+                let kind = ExprKind::MemberExpr( MemberExpr {
+                    receiver: object.into(),
+                    member: member.into()
+                });
+
+                return Ok(Expr { 
+                    kind, 
+                    span 
+                });
             }
         }
 
@@ -815,7 +837,7 @@ impl Parser {
                     span 
                 })
             } else {
-                Err(CompileError::Other("Expected an identifier".to_string()))
+                Err(CompileError::Other(format!("Expected an identifier REFERENCE {:?}", self.peek()?)))
             }
 
         } else {
