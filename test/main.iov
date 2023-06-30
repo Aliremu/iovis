@@ -5,9 +5,6 @@ fn load_texture(renderer: &SDL_Renderer, path: string): &SDL_Texture {
     let loaded_surface: &SDL_Surface = IMG_Load(path);
 
     let new_texture = SDL_CreateTextureFromSurface(renderer, loaded_surface);
-    //if new_texture == 0 {
-    //    printf("Unable to create texture from %s! SDL Error: %s\n", path, SDL_GetError());
-    //}
 
     SDL_FreeSurface(loaded_surface);
 
