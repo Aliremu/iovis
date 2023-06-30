@@ -54,6 +54,7 @@ SDL2 Bindings exist and can be found in `test/` along with a simple window appli
 - [x] LLVM-IR CodeGen
 - [x] Dependency Analysis
 - [x] Type Inferencing
+- [x] Automatic forward declaration for structs and functions
 - [ ] Arrays
 - [ ] Multi-dimensional arrays
 - [ ] Standard Library
